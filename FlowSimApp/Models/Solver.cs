@@ -68,6 +68,10 @@ namespace FlowSim.Models
         public double[]? PeakAmplitude { get; protected set; }
         /// <summary>实际模拟总时长（秒）= TimeLevel * TimeStep。</summary>
         public double TotalSimDuration { get; private set; }
+        /// <summary>集总调蓄库水位过程 [时间层]（m），仅当下游边界含 LumpedStorage 时填充。</summary>
+        public double[]? StorageStage { get; private set; }
+        /// <summary>集总调蓄库出口流量过程 [时间层]（m³/s），仅当下游边界含 LumpedStorage 时填充。</summary>
+        public double[]? StorageOutflow { get; private set; }
 
         /// <summary>是否自动调整空间步长以整除河道长度（默认 true）。</summary>
         protected readonly bool _fitSpatialStep;
@@ -214,6 +218,41 @@ namespace FlowSim.Models
                     peak = Math.Max(peak, Amplitude![k, i]);
                 PeakAmplitude![i] = peak;
             }
+
+            // 集总调蓄库后处理（与 Python prepare_results 中 lumped_storage 分支对应）
+            var ls = Channel.DownstreamBoundary.LumpedStorage;
+            if (ls != null)
+            {
+                int last = NumberOfNodes - 1;
+                double hw0 = WaterLevelAt(0, last);
+                double n0  = Channel.XsAtNode![last].GetEquivalentN(hw0);
+                double R0  = Channel.XsAtNode![last].HydraulicRadius(hw0);
+                // 计算 t=0 时刻调蓄库水位（= 通道末端水位 − 进口水头损失）
+                double initialStorageStage = hw0 - ls.EnergyLoss(AreaAt(0, last), Flow![0, last], n0, R0);
+                // 在 StageHydrograph 头部插入 t=0 记录（与 Python stage_hydrograph.insert(0,...) 对应）
+                ls.StageHydrograph.Insert(0, new[] { 0.0, initialStorageStage });
+
+                // 提取水位过程数组（列 1 = 水位值）
+                int nSt = Math.Min(ls.StageHydrograph.Count, nk);
+                StorageStage = new double[nSt];
+                for (int k = 0; k < nSt; k++)
+                    StorageStage[k] = ls.StageHydrograph[k][1];
+
+                // 计算出口流量过程
+                StorageOutflow = new double[nSt];
+                double q0 = Flow![0, last];
+                StorageOutflow[0] = ls.RatingCurve == null
+                    ? 0.0
+                    : Math.Min(q0, ls.RatingCurve.Discharge(StorageStage[0]));
+
+                for (int k = 1; k < nSt; k++)
+                {
+                    double avgInflow  = 0.5 * (Flow![k - 1, last] + Flow![k, last]);
+                    double volChange  = ls.NetVolChange(StorageStage[k - 1], StorageStage[k]);
+                    double avgOutflow = avgInflow - volChange / TimeStep;
+                    StorageOutflow[k] = avgInflow > 1e-10 ? avgOutflow * Flow![k, last] / avgInflow : 0.0;
+                }
+            }
         }
 
         /// <summary>
@@ -321,6 +360,22 @@ namespace FlowSim.Models
             WriteSheet("Amplitude",   Amplitude!);
             WriteSheet("Froude number", FroudeNumber!);
 
+            // 集总调蓄库出口流量工作表（与 Python save_results "Outflow" 工作表对应）
+            if (StorageOutflow != null)
+            {
+                var wsOut = wb.Worksheets.Add("Outflow");
+                wsOut.Cell(1, 1).Value = "Time";
+                wsOut.Cell(1, 2).Value = "outflow";
+                for (int k = 0; k < StorageOutflow.Length; k++)
+                {
+                    wsOut.Cell(k + 2, 1).Value = k * TimeStep;
+                    wsOut.Cell(k + 2, 2).Value = StorageOutflow[k];
+                }
+            }
+
+            // 子类额外工作表（如 PreissmannSolver 写入 "Reservoir stage"）
+            WriteExtraSheets(wb, nk);
+
             // 峰值振幅（一维，仅有距离轴）
             var wsPeak = wb.Worksheets.Add("Peak amplitude");
             for (int i = 0; i < distance.Length; i++)
@@ -342,6 +397,9 @@ namespace FlowSim.Models
             using var sw = new System.IO.StreamWriter(txtPath);
             sw.WriteLine($"Spatial step = {SpatialStep} m");
             sw.WriteLine($"Time step = {TimeStep} s");
+            // 子类额外行（如 Preissmann 写入 Theta）
+            WriteSummaryExtras(sw);
+            sw.WriteLine($"Simulation duration = {SecondsToHms(TotalSimDuration)}");
 
             // 统计峰值流量和质量不平衡
             double peakIn = 0, peakOut = 0, sumQin = 0;
@@ -364,6 +422,67 @@ namespace FlowSim.Models
             sw.WriteLine($"Peak outflow = {peakOut:F2} m^3/s");
             if (peakIn > 0)
                 sw.WriteLine($"Attenuation = {(peakIn - peakOut) / peakIn * 100:F2}%");
+
+            // 中间体积时间（与 Python save_results 中 median_vol_entry/arrival_time 对应）
+            double[] arrQin  = new double[nk];
+            double[] arrQout = new double[nk];
+            for (int k = 0; k < nk; k++)
+            {
+                arrQin[k]  = Flow![k, 0];
+                arrQout[k] = Flow![k, NumberOfNodes - 1];
+            }
+            // cumulative[i] = sum of first i elements（exclusive，与 Python np.sum(Q_in[:i]) 相同）
+            double cumInTotal = 0;
+            for (int k = 0; k < nk - 1; k++) cumInTotal += arrQin[k];
+            double medianEntryTime = (nk - 1) * TimeStep;
+            double cumIn2 = 0;
+            for (int k = 0; k < nk; k++)
+            {
+                if (cumIn2 >= 0.5 * cumInTotal) { medianEntryTime = k * TimeStep; break; }
+                cumIn2 += arrQin[k];
+            }
+
+            double cumOutTotal = 0;
+            for (int k = 0; k < nk - 1; k++) cumOutTotal += arrQout[k];
+            double medianArrivalTime = (nk - 1) * TimeStep;
+            double cumOut2 = 0;
+            for (int k = 0; k < nk; k++)
+            {
+                if (cumOut2 >= 0.5 * cumOutTotal) { medianArrivalTime = k * TimeStep; break; }
+                cumOut2 += arrQout[k];
+            }
+
+            sw.WriteLine($"Median volume entry time = {SecondsToHms(medianEntryTime)}");
+            sw.WriteLine($"Median volume arrival time = {SecondsToHms(medianArrivalTime)}");
+            sw.WriteLine($"Median volume travel time = {SecondsToHms(medianArrivalTime - medianEntryTime)}");
+        }
+
+        /// <summary>
+        /// 向文本摘要文件追加特定求解器的额外参数行（如 Theta）。
+        /// 默认实现为空；子类（如 <see cref="PreissmannSolver"/>）可重写。
+        /// 与 Python <c>save_results</c> 中 <c>if self._type == 'preissmann'</c> 分支对应。
+        /// </summary>
+        protected virtual void WriteSummaryExtras(System.IO.StreamWriter sw) { }
+
+        /// <summary>
+        /// 向 Excel 工作簿追加特定求解器的额外工作表（如 "Reservoir stage"）。
+        /// 默认实现为空；子类可重写。
+        /// 与 Python <c>save_results</c> 中 <c>if self._type=='preissmann'</c> 的 Reservoir stage 分支对应。
+        /// </summary>
+        /// <param name="wb">已打开的 ClosedXML 工作簿对象。</param>
+        /// <param name="nk">有效时间层数（用于确定写入行数）。</param>
+        protected virtual void WriteExtraSheets(XLWorkbook wb, int nk) { }
+
+        /// <summary>
+        /// 将秒数格式化为 HH:MM:SS 字符串，与 Python <c>utility.seconds_to_hms</c> 对应。
+        /// </summary>
+        private static string SecondsToHms(double seconds)
+        {
+            int total = (int)seconds;
+            int h = total / 3600;
+            int m = (total % 3600) / 60;
+            int s = total % 60;
+            return $"{h:D2}:{m:D2}:{s:D2}";
         }
     }
 }

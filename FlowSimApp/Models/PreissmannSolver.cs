@@ -1,4 +1,5 @@
 using System;
+using ClosedXML.Excel;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.LinearAlgebra.Double;
 
@@ -531,6 +532,31 @@ namespace FlowSim.Models
 
             if (!fail)
                 Console.WriteLine("Flow is subcritical.");
+        }
+
+        /// <summary>
+        /// 向文本摘要追加 Theta 参数行。
+        /// 与 Python <c>save_results</c> 中 <c>if self._type == 'preissmann': output_file.write(f'Theta = {self.theta}\n')</c> 对应。
+        /// </summary>
+        protected override void WriteSummaryExtras(System.IO.StreamWriter sw)
+            => sw.WriteLine($"Theta = {Theta}");
+
+        /// <summary>
+        /// 向 Excel 工作簿追加 "Reservoir stage" 工作表（仅当含集总调蓄库时写入）。
+        /// 与 Python <c>save_results</c> 中 <c>if self._type=='preissmann': df_stage.to_excel(..., sheet_name="Reservoir stage")</c> 对应。
+        /// </summary>
+        protected override void WriteExtraSheets(XLWorkbook wb, int nk)
+        {
+            if (StorageStage == null) return;
+            var ws = wb.Worksheets.Add("Reservoir stage");
+            ws.Cell(1, 1).Value = "Time";
+            ws.Cell(1, 2).Value = "stage";
+            int n = Math.Min(StorageStage.Length, nk);
+            for (int k = 0; k < n; k++)
+            {
+                ws.Cell(k + 2, 1).Value = k * TimeStep;
+                ws.Cell(k + 2, 2).Value = StorageStage[k];
+            }
         }
     }
 }
