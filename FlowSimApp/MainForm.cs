@@ -24,6 +24,11 @@ namespace FlowSim
         /// <summary>当前仿真求解器实例（仿真前为 null）。</summary>
         private Solver? _solver;
 
+        /// <summary>已加载的不规则断面横坐标数组（m）。</summary>
+        private double[]? _xsX;
+        /// <summary>已加载的不规则断面高程数组（m）。</summary>
+        private double[]? _xsZ;
+
         /// <summary>
         /// 构造函数：调用 WinForms 生成的控件初始化代码。
         /// </summary>
@@ -112,6 +117,63 @@ namespace FlowSim
         }
 
         /// <summary>
+        /// 加载不规则断面 CSV 文件（格式：首行为标题，第 1 列横坐标，第 2 列高程）。
+        /// 解析成功后将数据存入 <see cref="_xsX"/> 和 <see cref="_xsZ"/>。
+        /// </summary>
+        private void btnLoadXsCsv_Click(object sender, EventArgs e)
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title  = "选择不规则断面 CSV 文件",
+                Filter = "CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*"
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+            try
+            {
+                var xs = new System.Collections.Generic.List<double>();
+                var zs = new System.Collections.Generic.List<double>();
+                bool skipHeader = true;
+                foreach (var line in System.IO.File.ReadAllLines(dlg.FileName))
+                {
+                    if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("#")) continue;
+                    var parts = line.Split(',');
+                    if (parts.Length < 2) continue;
+                    // 首行若含非数字则视为标题行跳过
+                    if (skipHeader && !double.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out _))
+                    { skipHeader = false; continue; }
+                    skipHeader = false;
+                    if (double.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out double x) &&
+                        double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out double z))
+                    { xs.Add(x); zs.Add(z); }
+                }
+                if (xs.Count < 3)
+                    throw new InvalidOperationException("断面数据不足（至少需要 3 个点）。");
+                _xsX = xs.ToArray();
+                _xsZ = zs.ToArray();
+                lblXsFile.Text = System.IO.Path.GetFileName(dlg.FileName);
+                Log($"已加载断面文件：{dlg.FileName}（{_xsX.Length} 个点）");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"加载断面 CSV 失败：{ex.Message}", "错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        /// <summary>
+        /// 集总调蓄库启用复选框变更事件：启用/禁用相关参数控件。
+        /// </summary>
+        private void chkLumpedStorage_CheckedChanged(object sender, EventArgs e)
+        {
+            bool en = chkLumpedStorage.Checked;
+            numLsYMin.Enabled = numLsYMax.Enabled = numLsSurfaceArea.Enabled = cmbLsRcType.Enabled = en;
+            numLsRcA.Enabled = numLsRcB.Enabled = numLsRcShift.Enabled = en && cmbLsRcType.SelectedIndex > 0;
+        }
+
+        /// <summary>
         /// 根据界面控件当前值构造一维河道和求解器。
         /// <para>
         /// 构造流程：
@@ -157,25 +219,65 @@ namespace FlowSim
                     break;
             }
 
-            // 根据下游边界类型选择
+            // 根据下游边界类型选择（若启用调蓄库则强制 FixedDepth）
+            bool useLumpedStorage = chkLumpedStorage.Checked;
             BoundaryConditionType dsBcType;
-            switch (cmbDsBcType.SelectedIndex)
-            {
-                case 0:  dsBcType = BoundaryConditionType.NormalDepth;  break;  // 正常水深
-                case 1:  dsBcType = BoundaryConditionType.FixedDepth;   break;  // 固定水深
-                default: dsBcType = BoundaryConditionType.NormalDepth;  break;
-            }
+            if (useLumpedStorage)
+                dsBcType = BoundaryConditionType.FixedDepth;
+            else
+                switch (cmbDsBcType.SelectedIndex)
+                {
+                    case 0:  dsBcType = BoundaryConditionType.NormalDepth;  break;
+                    case 1:  dsBcType = BoundaryConditionType.FixedDepth;   break;
+                    default: dsBcType = BoundaryConditionType.NormalDepth;  break;
+                }
+
+            // 调蓄库启用时，用 yMin 计算初始下游水深，否则直接用界面值
+            double dsInitDepth = useLumpedStorage
+                ? Math.Max((double)numLsYMin.Value - dsBedLevel, 0.1)
+                : dsDepth;
 
             // 计算河床纵坡（由上下游床底高程差 / 河道长度）
             double bedSlope = length > 0 ? (usBedLevel - dsBedLevel) / length : 1e-4;
 
             // 构造上下游边界对象（桩号分别为 0 和 length）
             var usBoundary = new Boundary(usBcType, 0, usBedLevel, null, null, usHydrograph);
-            var dsBoundary = new Boundary(dsBcType, length, dsBedLevel, dsDepth);
+            var dsBoundary = new Boundary(dsBcType, length, dsBedLevel, dsInitDepth);
 
             // 构造河道（使用渐变流方程初始化水面线）
             var channel = new Channel(usBoundary, dsBoundary, initialFlow, roughness, width,
                                       InitializationMethod.GVFEquation);
+
+            // 不规则断面：将加载的 XS 数据（以 usBedLevel/dsBedLevel 为床底）注入河道
+            if (cmbXsType.SelectedIndex == 1 && _xsX != null && _xsZ != null)
+            {
+                double zMinOrig = _xsZ.Min();
+                // 将 Z 数组整体平移，使最低点对齐上/下游床底高程
+                double[] zUs = System.Array.ConvertAll(_xsZ, z => z - zMinOrig + usBedLevel);
+                double[] zDs = System.Array.ConvertAll(_xsZ, z => z - zMinOrig + dsBedLevel);
+                var usXs = new IrregularSection(_xsX, zUs, roughness, bedSlope);
+                var dsXs = new IrregularSection(_xsX, zDs, roughness, bedSlope);
+                channel.SetCrossSection(new[] { 0.0, length }, new CrossSection[] { usXs, dsXs });
+            }
+
+            // 集总调蓄库：创建 LumpedStorage 并挂接到下游 FixedDepth 边界
+            if (useLumpedStorage)
+            {
+                double lsYMin     = (double)numLsYMin.Value;
+                double lsYMax     = (double)numLsYMax.Value;
+                double lsSurfArea = (double)numLsSurfaceArea.Value;
+                var ls = new LumpedStorage(lsYMin, lsYMax, lsSurfArea);
+                if (cmbLsRcType.SelectedIndex > 0)   // 幂律水位流量关系
+                {
+                    var rc = new RatingCurve();
+                    rc.Set(RatingCurveType.Power,
+                           (double)numLsRcA.Value,
+                           (double)numLsRcB.Value,
+                           stageShift: (double)numLsRcShift.Value);
+                    ls.RatingCurve = rc;
+                }
+                dsBoundary.SetLumpedStorage(ls);
+            }
 
             // 读取求解器参数
             double timeStep    = (double)numTimeStep.Value;

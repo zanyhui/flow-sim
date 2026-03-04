@@ -56,6 +56,10 @@ namespace FlowSim
             this.numInitialFlow = new NumericUpDown();   // 初始流量（m³/s）
             this.numUsBedLevel  = new NumericUpDown();   // 上游床底高程（m）
             this.numDsBedLevel  = new NumericUpDown();   // 下游床底高程（m）
+            // 不规则断面控件
+            this.cmbXsType    = new ComboBox();
+            this.btnLoadXsCsv = new Button();
+            this.lblXsFile    = new Label();
 
             // ---- 边界条件选项卡控件 ----
             this.cmbUsBcType = new ComboBox();           // 上游边界类型下拉框
@@ -63,6 +67,15 @@ namespace FlowSim
             this.numPeakFlow = new NumericUpDown();      // 峰值流量（m³/s）
             this.numRiseTime = new NumericUpDown();      // 起涨时间（小时）
             this.numDsDepth  = new NumericUpDown();      // 下游初始/固定水深（m）
+            // 集总调蓄库控件
+            this.chkLumpedStorage = new CheckBox();
+            this.numLsYMin         = new NumericUpDown();
+            this.numLsYMax         = new NumericUpDown();
+            this.numLsSurfaceArea  = new NumericUpDown();
+            this.cmbLsRcType       = new ComboBox();
+            this.numLsRcA          = new NumericUpDown();
+            this.numLsRcB          = new NumericUpDown();
+            this.numLsRcShift      = new NumericUpDown();
 
             // ---- 求解器设置选项卡控件 ----
             this.cmbSolverMethod = new ComboBox();       // 格式选择（Preissmann/Lax）
@@ -96,7 +109,7 @@ namespace FlowSim
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 8,
+                RowCount = 10,
                 Padding = new System.Windows.Forms.Padding(10)
             };
             pnlChannel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -124,14 +137,38 @@ namespace FlowSim
             AddRow(pnlChannel, "上游床底高程（m）：", numUsBedLevel);
             AddRow(pnlChannel, "下游床底高程（m）：", numDsBedLevel);
 
+            // 断面类型选择
+            cmbXsType.Items.AddRange(new[] { "梯形断面", "不规则断面" });
+            cmbXsType.SelectedIndex = 0;
+            cmbXsType.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbXsType.Dock = DockStyle.Fill;
+            cmbXsType.SelectedIndexChanged += (s, e) => btnLoadXsCsv.Enabled = cmbXsType.SelectedIndex == 1;
+
+            // CSV 加载行：按钮 + 文件名标签放在同一个 Panel 里
+            var pnlCsvLoad = new Panel { Dock = DockStyle.Fill };
+            btnLoadXsCsv.Text    = "加载 CSV…";
+            btnLoadXsCsv.Enabled = false;
+            btnLoadXsCsv.Location = new System.Drawing.Point(0, 2);
+            btnLoadXsCsv.Size     = new System.Drawing.Size(100, 24);
+            btnLoadXsCsv.Click   += btnLoadXsCsv_Click;
+            lblXsFile.Text     = "(未选择)";
+            lblXsFile.Location = new System.Drawing.Point(106, 5);
+            lblXsFile.AutoSize = true;
+            pnlCsvLoad.Controls.Add(btnLoadXsCsv);
+            pnlCsvLoad.Controls.Add(lblXsFile);
+
+            AddRow2(pnlChannel, "断面类型：",       cmbXsType);
+            AddRow2(pnlChannel, "不规则断面 CSV：", pnlCsvLoad);
+
             tabChannel.Controls.Add(pnlChannel);
 
             // ===== 边界条件选项卡 =====
             var pnlBoundary = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Top,
                 ColumnCount = 2,
-                RowCount = 10,
+                RowCount = 20,
+                AutoSize = true,
                 Padding = new System.Windows.Forms.Padding(10)
             };
             pnlBoundary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -171,7 +208,50 @@ namespace FlowSim
             AddRow2(pnlBoundary, "下游边界条件类型：",  cmbDsBcType);
             AddRow2(pnlBoundary, "初始/固定水深（m）：", numDsDepth);
 
-            tabBoundary.Controls.Add(pnlBoundary);
+            // ── 集总调蓄库（LumpedStorage）区 ──
+            pnlBoundary.Controls.Add(new Label
+            {
+                Text = "─── 集总调蓄库 ───",
+                Font = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold)
+            });
+            chkLumpedStorage.Text = "启用下游调蓄库 (LumpedStorage)";
+            chkLumpedStorage.AutoSize = true;
+            chkLumpedStorage.Dock = DockStyle.Fill;
+            chkLumpedStorage.CheckedChanged += chkLumpedStorage_CheckedChanged;
+            pnlBoundary.Controls.Add(chkLumpedStorage);
+
+            ConfigNum(numLsYMin,       5.0m,  -1000m, 10000m, 1, 1m);
+            ConfigNum(numLsYMax,       12.0m, -1000m, 10000m, 1, 1m);
+            ConfigNum(numLsSurfaceArea, 500000m, 1m, 999000000m, 0, 50000m);
+            cmbLsRcType.Items.AddRange(new[] { "无出流", "幂律  Q = A·(Z+shift)^B" });
+            cmbLsRcType.SelectedIndex = 0;
+            cmbLsRcType.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbLsRcType.Dock = DockStyle.Fill;
+            cmbLsRcType.SelectedIndexChanged += (s, e) =>
+            {
+                bool hasCurve = cmbLsRcType.SelectedIndex > 0 && chkLumpedStorage.Checked;
+                numLsRcA.Enabled = numLsRcB.Enabled = numLsRcShift.Enabled = hasCurve;
+            };
+            ConfigNum(numLsRcA,     50m,   0.001m, 99000000m, 3, 10m);
+            ConfigNum(numLsRcB,     1.5m,  0.01m,  10m,       2, 0.1m);
+            ConfigNum(numLsRcShift, -5.0m, -1000m, 0m,        2, 0.5m);
+
+            AddRow2(pnlBoundary, "最低水位 yMin（m）：", numLsYMin);
+            AddRow2(pnlBoundary, "最高水位 yMax（m）：", numLsYMax);
+            AddRow2(pnlBoundary, "水库水面积（m²）：",   numLsSurfaceArea);
+            AddRow2(pnlBoundary, "出口曲线类型：",       cmbLsRcType);
+            AddRow2(pnlBoundary, "曲线系数 A：",         numLsRcA);
+            AddRow2(pnlBoundary, "曲线指数 B：",         numLsRcB);
+            AddRow2(pnlBoundary, "水位偏移 shift：",     numLsRcShift);
+
+            // 初始禁用调蓄库控件（勾选后启用）
+            numLsYMin.Enabled = numLsYMax.Enabled = numLsSurfaceArea.Enabled =
+            cmbLsRcType.Enabled = numLsRcA.Enabled = numLsRcB.Enabled = numLsRcShift.Enabled = false;
+
+            // 放入可滚动容器（控件多时支持滚动查看）
+            var scrollBoundary = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+            scrollBoundary.Controls.Add(pnlBoundary);
+            tabBoundary.Controls.Add(scrollBoundary);
 
             // ===== 求解器设置选项卡 =====
             var pnlSolver = new TableLayoutPanel
@@ -318,6 +398,15 @@ namespace FlowSim
         private DataGridView gridSummary;
         private Button btnRun, btnSave;
         private TextBox txtLog;
+        // 不规则断面控件
+        private ComboBox cmbXsType;
+        private Button btnLoadXsCsv;
+        private Label lblXsFile;
+        // 集总调蓄库控件
+        private CheckBox chkLumpedStorage;
+        private NumericUpDown numLsYMin, numLsYMax, numLsSurfaceArea;
+        private NumericUpDown numLsRcA, numLsRcB, numLsRcShift;
+        private ComboBox cmbLsRcType;
 
         #endregion
     }
