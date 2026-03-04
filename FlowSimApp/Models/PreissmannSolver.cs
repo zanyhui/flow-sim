@@ -109,7 +109,11 @@ namespace FlowSim.Models
                 {
                     iteration++;
                     if (iteration - 1 >= maxIter)
+                    {
+                        // 收敛失败前先诊断各节点流态（与 Python check_criticality 调用时机一致）
+                        CheckCriticality();
                         throw new InvalidOperationException($"Failed to converge after {maxIter} iterations.");
+                    }
 
                     // 将当前估计值写入结果数组（作为本次线性化基点）
                     for (int i = 0; i < NumberOfNodes; i++)
@@ -487,5 +491,46 @@ namespace FlowSim.Models
         /// </summary>
         private double CellAvg(double k1_i1 = 0, double k1_i = 0, double k_i1 = 0, double k_i = 0)
             => 0.5 * Theta * (k1_i1 + k1_i) + 0.5 * (1.0 - Theta) * (k_i1 + k_i);
+
+        /// <summary>
+        /// 检查各节点的水流临界状态，与 Python preissmann.py <c>check_criticality</c> 逻辑完全对应。
+        /// <para>
+        /// 对当前时间层每个节点计算弗劳德数 Fr = V / √(g·D)，
+        /// 其中 V = Q/A（断面平均流速），D = A/T（水力深度）：
+        /// <list type="bullet">
+        ///   <item>Fr == 1.0：临界流，输出 WARNING；</item>
+        ///   <item>Fr &gt; 1.0：超临界流，输出 WARNING；</item>
+        ///   <item>全部节点 Fr &lt; 1.0：输出 "Flow is subcritical."。</item>
+        /// </list>
+        /// 通常在牛顿迭代不收敛（超过最大迭代次数）时调用，用于诊断是否因流态转变导致收敛困难。
+        /// </para>
+        /// </summary>
+        private void CheckCriticality()
+        {
+            bool fail = false;
+            for (int i = 0; i < NumberOfNodes; i++)
+            {
+                double x  = Channel.ChAtNode![i];               // 节点桩号（m）
+                double hw = WaterLevelAt(TimeLevel, i);         // 绝对水位（m）
+                double T  = Channel.TopWidth(i, hw);            // 水面宽（m）
+                double A  = AreaAt(TimeLevel, i);               // 过水面积（m²）
+                double Q  = FlowAt(TimeLevel, i);               // 流量（m³/s）
+                double fr = Hydraulics.FroudeNumber(T, A, Q);   // 弗劳德数
+
+                if (fr == 1.0)
+                {
+                    fail = true;
+                    Console.WriteLine($"WARNING: Flow goes critical at x = {x} m. Fr = {fr}.");
+                }
+                else if (fr > 1.0)
+                {
+                    fail = true;
+                    Console.WriteLine($"WARNING: Flow goes supercritical at x = {x} m. Fr = {fr}.");
+                }
+            }
+
+            if (!fail)
+                Console.WriteLine("Flow is subcritical.");
+        }
     }
 }
