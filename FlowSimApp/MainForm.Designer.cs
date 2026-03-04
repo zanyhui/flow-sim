@@ -3,10 +3,29 @@ using ScottPlot;
 
 namespace FlowSim
 {
+    /// <summary>
+    /// MainForm 的 WinForms 设计器生成部分（Partial class）。
+    /// <para>
+    /// 本文件由 InitializeComponent 方法手动编写（等价于设计器自动生成），
+    /// 完成所有控件的创建、布局和初始属性赋值。
+    /// 分为四个主要功能区（选项卡）：
+    /// <list type="bullet">
+    ///   <item><b>河道设置</b>：输入河道几何参数（长度、宽度、糙率、床底高程等）；</item>
+    ///   <item><b>边界条件</b>：选择上下游边界类型及对应参数（峰值流量、起涨时间、水深等）；</item>
+    ///   <item><b>求解器设置</b>：选择格式（Preissmann/Lax）及时间步长、空间步长等；</item>
+    ///   <item><b>结果</b>：显示流量过程线图、水面纵剖面图和统计汇总表格。</item>
+    /// </list>
+    /// 底部固定面板包含"运行仿真"按钮、"保存结果"按钮和日志文本框。
+    /// </para>
+    /// </summary>
     partial class MainForm
     {
         private System.ComponentModel.IContainer components = null;
 
+        /// <summary>
+        /// 释放 WinForms 托管资源（组件容器）。
+        /// 由 WinForms 框架在窗体关闭时自动调用。
+        /// </summary>
         protected override void Dispose(bool disposing)
         {
             if (disposing && (components != null)) components.Dispose();
@@ -15,57 +34,64 @@ namespace FlowSim
 
         #region Windows Form Designer generated code
 
+        /// <summary>
+        /// 初始化所有控件（由构造函数调用）。
+        /// 按功能分区创建控件并加入对应选项卡或面板。
+        /// </summary>
         private void InitializeComponent()
         {
             components = new System.ComponentModel.Container();
-            this.tabControl = new TabControl();
-            this.tabChannel = new TabPage("河道设置");
+
+            // 主选项卡控件及四个选项页
+            this.tabControl  = new TabControl();
+            this.tabChannel  = new TabPage("河道设置");
             this.tabBoundary = new TabPage("边界条件");
-            this.tabSolver = new TabPage("求解器设置");
-            this.tabResults = new TabPage("结果");
+            this.tabSolver   = new TabPage("求解器设置");
+            this.tabResults  = new TabPage("结果");
 
-            // ---- Channel Setup controls ----
-            this.numLength      = new NumericUpDown();
-            this.numWidth       = new NumericUpDown();
-            this.numRoughness   = new NumericUpDown();
-            this.numInitialFlow = new NumericUpDown();
-            this.numUsBedLevel  = new NumericUpDown();
-            this.numDsBedLevel  = new NumericUpDown();
+            // ---- 河道设置选项卡控件 ----
+            this.numLength      = new NumericUpDown();   // 河道长度（m）
+            this.numWidth       = new NumericUpDown();   // 河道宽度（m）
+            this.numRoughness   = new NumericUpDown();   // 曼宁糙率 n
+            this.numInitialFlow = new NumericUpDown();   // 初始流量（m³/s）
+            this.numUsBedLevel  = new NumericUpDown();   // 上游床底高程（m）
+            this.numDsBedLevel  = new NumericUpDown();   // 下游床底高程（m）
 
-            // ---- Boundary controls ----
-            this.cmbUsBcType  = new ComboBox();
-            this.cmbDsBcType  = new ComboBox();
-            this.numPeakFlow  = new NumericUpDown();
-            this.numRiseTime  = new NumericUpDown();
-            this.numDsDepth   = new NumericUpDown();
+            // ---- 边界条件选项卡控件 ----
+            this.cmbUsBcType = new ComboBox();           // 上游边界类型下拉框
+            this.cmbDsBcType = new ComboBox();           // 下游边界类型下拉框
+            this.numPeakFlow = new NumericUpDown();      // 峰值流量（m³/s）
+            this.numRiseTime = new NumericUpDown();      // 起涨时间（小时）
+            this.numDsDepth  = new NumericUpDown();      // 下游初始/固定水深（m）
 
-            // ---- Solver controls ----
-            this.cmbSolverMethod = new ComboBox();
-            this.numTimeStep     = new NumericUpDown();
-            this.numSpatialStep  = new NumericUpDown();
-            this.numSimTime      = new NumericUpDown();
-            this.numTheta        = new NumericUpDown();
+            // ---- 求解器设置选项卡控件 ----
+            this.cmbSolverMethod = new ComboBox();       // 格式选择（Preissmann/Lax）
+            this.numTimeStep     = new NumericUpDown();  // 时间步长（s）
+            this.numSpatialStep  = new NumericUpDown();  // 空间步长（m）
+            this.numSimTime      = new NumericUpDown();  // 模拟时长（小时）
+            this.numTheta        = new NumericUpDown();  // Preissmann θ 参数
 
-            // ---- Results controls ----
-            this.plotFlow    = new FormsPlot();
-            this.plotProfile = new FormsPlot();
-            this.gridSummary = new DataGridView();
+            // ---- 结果选项卡控件 ----
+            this.plotFlow    = new FormsPlot();          // 流量过程线图表
+            this.plotProfile = new FormsPlot();          // 水面纵剖面图表
+            this.gridSummary = new DataGridView();       // 统计汇总表格
 
-            // ---- Buttons / log ----
-            this.btnRun  = new Button();
-            this.btnSave = new Button();
-            this.txtLog  = new TextBox();
+            // ---- 底部固定面板控件 ----
+            this.btnRun  = new Button();                 // "运行仿真"按钮
+            this.btnSave = new Button();                 // "保存结果"按钮
+            this.txtLog  = new TextBox();                // 日志文本框
 
-            this.SuspendLayout();
+            this.SuspendLayout();   // 暂停布局计算，提升初始化性能
 
-            // ===== TAB CONTROL =====
+            // ===== 主选项卡控件布局 =====
             tabControl.Dock = DockStyle.Fill;
             tabControl.TabPages.Add(tabChannel);
             tabControl.TabPages.Add(tabBoundary);
             tabControl.TabPages.Add(tabSolver);
             tabControl.TabPages.Add(tabResults);
 
-            // ===== CHANNEL SETUP TAB =====
+            // ===== 河道设置选项卡 =====
+            // 使用 TableLayoutPanel 两列均分布局（标签列 + 输入控件列）
             var pnlChannel = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -76,29 +102,31 @@ namespace FlowSim
             pnlChannel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             pnlChannel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
 
+            // 局部辅助函数：向 TableLayoutPanel 添加"标签 + 数字输入框"行
             void AddRow(TableLayoutPanel p, string label, NumericUpDown num)
             {
                 p.Controls.Add(new Label { Text = label, Anchor = AnchorStyles.Left | AnchorStyles.Right, AutoSize = true });
                 p.Controls.Add(num);
             }
 
-            ConfigNum(numLength, 20000, 100, 100000, 0, 20000);
-            ConfigNum(numWidth, 250, 1, 10000, 0, 250);
-            ConfigNum(numRoughness, 0.027m, 0.001m, 0.5m, 3, 0.027m);
-            ConfigNum(numInitialFlow, 250, 0, 100000, 0, 250);
-            ConfigNum(numUsBedLevel, 10, -1000, 10000, 1, 10);
-            ConfigNum(numDsBedLevel, 8, -1000, 10000, 1, 8);
+            // 配置各数字输入框的范围、精度和默认值
+            ConfigNum(numLength,      20000,   100,    100000, 0, 20000);    // 河道长度默认 20 km
+            ConfigNum(numWidth,       250,     1,      10000,  0, 250);      // 宽度默认 250 m
+            ConfigNum(numRoughness,   0.027m,  0.001m, 0.5m,   3, 0.027m);  // 糙率默认 0.027
+            ConfigNum(numInitialFlow, 250,     0,      100000, 0, 250);      // 初始流量默认 250 m³/s
+            ConfigNum(numUsBedLevel,  10,      -1000,  10000,  1, 10);      // 上游床底高程默认 10 m
+            ConfigNum(numDsBedLevel,  8,       -1000,  10000,  1, 8);       // 下游床底高程默认 8 m
 
-            AddRow(pnlChannel, "河道长度（m）：", numLength);
-            AddRow(pnlChannel, "河道宽度（m）：", numWidth);
-            AddRow(pnlChannel, "曼宁糙率 n：", numRoughness);
+            AddRow(pnlChannel, "河道长度（m）：",    numLength);
+            AddRow(pnlChannel, "河道宽度（m）：",    numWidth);
+            AddRow(pnlChannel, "曼宁糙率 n：",       numRoughness);
             AddRow(pnlChannel, "初始流量（m³/s）：", numInitialFlow);
             AddRow(pnlChannel, "上游床底高程（m）：", numUsBedLevel);
             AddRow(pnlChannel, "下游床底高程（m）：", numDsBedLevel);
 
             tabChannel.Controls.Add(pnlChannel);
 
-            // ===== BOUNDARY CONDITIONS TAB =====
+            // ===== 边界条件选项卡 =====
             var pnlBoundary = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -109,35 +137,43 @@ namespace FlowSim
             pnlBoundary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             pnlBoundary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
 
+            // 上游边界类型：流量过程线 or 正常水深
             cmbUsBcType.Items.AddRange(new[] { "流量过程线", "正常水深" });
-            cmbUsBcType.SelectedIndex = 0; cmbUsBcType.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbUsBcType.SelectedIndex = 0;
+            cmbUsBcType.DropDownStyle = ComboBoxStyle.DropDownList;
 
+            // 下游边界类型：正常水深 or 固定水深
             cmbDsBcType.Items.AddRange(new[] { "正常水深", "固定水深" });
-            cmbDsBcType.SelectedIndex = 0; cmbDsBcType.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbDsBcType.SelectedIndex = 0;
+            cmbDsBcType.DropDownStyle = ComboBoxStyle.DropDownList;
 
-            ConfigNum(numPeakFlow, 1000, 0, 1000000, 0, 1000);
-            ConfigNum(numRiseTime, 2, 0.1m, 100, 1, 2);
-            ConfigNum(numDsDepth, 3, 0.01m, 1000, 2, 3);
+            ConfigNum(numPeakFlow, 1000,   0,      1000000, 0,    1000);    // 峰值流量默认 1000 m³/s
+            ConfigNum(numRiseTime, 2,      0.1m,   100,     1,    2);       // 起涨时间默认 2 h
+            ConfigNum(numDsDepth,  3,      0.01m,  1000,    2,    3);       // 下游水深默认 3 m
 
+            // 局部辅助函数：添加"标签 + 任意控件"行
             void AddRow2(TableLayoutPanel p, string label, Control ctrl)
             {
                 p.Controls.Add(new Label { Text = label, Anchor = AnchorStyles.Left | AnchorStyles.Right, AutoSize = true });
                 p.Controls.Add(ctrl);
             }
 
+            // 上游区分隔标题
             pnlBoundary.Controls.Add(new Label { Text = "─── 上游 ───", Font = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold) });
-            pnlBoundary.Controls.Add(new Label());
+            pnlBoundary.Controls.Add(new Label());   // 占位（右列空）
             AddRow2(pnlBoundary, "上游边界条件类型：", cmbUsBcType);
             AddRow2(pnlBoundary, "峰值流量（m³/s）：", numPeakFlow);
             AddRow2(pnlBoundary, "起涨时间（小时）：", numRiseTime);
+
+            // 下游区分隔标题
             pnlBoundary.Controls.Add(new Label { Text = "─── 下游 ───", Font = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold) });
             pnlBoundary.Controls.Add(new Label());
-            AddRow2(pnlBoundary, "下游边界条件类型：", cmbDsBcType);
+            AddRow2(pnlBoundary, "下游边界条件类型：",  cmbDsBcType);
             AddRow2(pnlBoundary, "初始/固定水深（m）：", numDsDepth);
 
             tabBoundary.Controls.Add(pnlBoundary);
 
-            // ===== SOLVER SETTINGS TAB =====
+            // ===== 求解器设置选项卡 =====
             var pnlSolver = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -148,107 +184,128 @@ namespace FlowSim
             pnlSolver.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             pnlSolver.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
 
+            // 格式选择下拉框；选 Lax 时禁用 θ 参数（仅 Preissmann 使用）
             cmbSolverMethod.Items.AddRange(new[] { "Preissmann", "Lax-Friedrichs" });
-            cmbSolverMethod.SelectedIndex = 0; cmbSolverMethod.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbSolverMethod.SelectedIndex = 0;
+            cmbSolverMethod.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbSolverMethod.SelectedIndexChanged += (s, e) => numTheta.Enabled = cmbSolverMethod.SelectedIndex == 0;
 
-            ConfigNum(numTimeStep, 60, 1, 3600, 0, 60);
-            ConfigNum(numSpatialStep, 500, 10, 10000, 0, 500);
-            ConfigNum(numSimTime, 24, 1, 720, 0, 24);
-            ConfigNum(numTheta, 0.6m, 0.5m, 1.0m, 2, 0.6m);
+            ConfigNum(numTimeStep,    60,    1,     3600,  0,    60);      // 时间步长默认 60 s
+            ConfigNum(numSpatialStep, 500,   10,    10000, 0,    500);     // 空间步长默认 500 m
+            ConfigNum(numSimTime,     24,    1,     720,   0,    24);      // 模拟时长默认 24 h
+            ConfigNum(numTheta,       0.6m,  0.5m,  1.0m,  2,    0.6m);   // θ 默认 0.6（适度隐式）
 
             AddRow(pnlSolver, "时间步长（s）：", numTimeStep);
             pnlSolver.Controls.Add(new Label { Text = "求解方法：", AutoSize = true });
             pnlSolver.Controls.Add(cmbSolverMethod);
-            AddRow(pnlSolver, "空间步长（m）：", numSpatialStep);
-            AddRow(pnlSolver, "模拟时长（小时）：", numSimTime);
+            AddRow(pnlSolver, "空间步长（m）：",        numSpatialStep);
+            AddRow(pnlSolver, "模拟时长（小时）：",     numSimTime);
             AddRow(pnlSolver, "θ 参数（Preissmann）：", numTheta);
 
             tabSolver.Controls.Add(pnlSolver);
 
-            // ===== RESULTS TAB =====
+            // ===== 结果选项卡 =====
+            // 上半部分：左右两个图表（水平 SplitContainer）
+            // 下半部分：统计汇总表格
             var splitResults = new SplitContainer
             {
                 Dock = DockStyle.Fill,
                 Orientation = System.Windows.Forms.Orientation.Horizontal,
-                SplitterDistance = 350
+                SplitterDistance = 350   // 分割条距顶部 350 px
             };
 
             var splitPlots = new SplitContainer
             {
                 Dock = DockStyle.Fill,
-                Orientation = System.Windows.Forms.Orientation.Vertical
+                Orientation = System.Windows.Forms.Orientation.Vertical   // 左右分割
             };
 
-            plotFlow.Dock = DockStyle.Fill;
-            plotProfile.Dock = DockStyle.Fill;
+            plotFlow.Dock    = DockStyle.Fill;   // 左侧：流量过程线
+            plotProfile.Dock = DockStyle.Fill;   // 右侧：水面纵剖面
             splitPlots.Panel1.Controls.Add(plotFlow);
             splitPlots.Panel2.Controls.Add(plotProfile);
 
-            gridSummary.Dock = DockStyle.Fill;
-            gridSummary.ColumnCount = 2;
-            gridSummary.Columns[0].Name = "参数";
-            gridSummary.Columns[1].Name = "数值";
+            // 统计汇总表格配置：两列（参数名 + 数值），只读
+            gridSummary.Dock           = DockStyle.Fill;
+            gridSummary.ColumnCount    = 2;
+            gridSummary.Columns[0].Name  = "参数";
+            gridSummary.Columns[1].Name  = "数值";
             gridSummary.Columns[0].Width = 250;
             gridSummary.Columns[1].Width = 150;
             gridSummary.AllowUserToAddRows = false;
-            gridSummary.ReadOnly = true;
-            gridSummary.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+            gridSummary.ReadOnly           = true;
+            gridSummary.AutoSizeRowsMode   = DataGridViewAutoSizeRowsMode.AllCells;
 
             splitResults.Panel1.Controls.Add(splitPlots);
             splitResults.Panel2.Controls.Add(gridSummary);
 
             tabResults.Controls.Add(splitResults);
 
-            // ===== BUTTONS & LOG =====
-            btnRun.Text = "▶ 运行仿真";
-            btnRun.Size = new System.Drawing.Size(150, 35);
-            btnRun.Location = new System.Drawing.Point(10, 5);
-            btnRun.Click += btnRun_Click;
+            // ===== 底部固定面板（按钮 + 日志）=====
+            // "运行仿真"按钮（蓝色主按钮）
+            btnRun.Text      = "▶ 运行仿真";
+            btnRun.Size      = new System.Drawing.Size(150, 35);
+            btnRun.Location  = new System.Drawing.Point(10, 5);
+            btnRun.Click    += btnRun_Click;
             btnRun.BackColor = System.Drawing.Color.FromArgb(0, 122, 204);
             btnRun.ForeColor = System.Drawing.Color.White;
             btnRun.FlatStyle = FlatStyle.Flat;
 
-            btnSave.Text = "💾 保存结果";
-            btnSave.Size = new System.Drawing.Size(150, 35);
-            btnSave.Location = new System.Drawing.Point(170, 5);
-            btnSave.Click += btnSave_Click;
-            btnSave.Enabled = false;
+            // "保存结果"按钮（仿真完成前禁用）
+            btnSave.Text      = "💾 保存结果";
+            btnSave.Size      = new System.Drawing.Size(150, 35);
+            btnSave.Location  = new System.Drawing.Point(170, 5);
+            btnSave.Click    += btnSave_Click;
+            btnSave.Enabled   = false;
             btnSave.FlatStyle = FlatStyle.Flat;
 
-            txtLog.Multiline = true;
-            txtLog.ScrollBars = ScrollBars.Vertical;
-            txtLog.ReadOnly = true;
-            txtLog.Location = new System.Drawing.Point(10, 45);
-            txtLog.Width = 760;
-            txtLog.Height = 80;
-            txtLog.BackColor = System.Drawing.Color.Black;
-            txtLog.ForeColor = System.Drawing.Color.Lime;
-            txtLog.Font = new System.Drawing.Font("Consolas", 8);
+            // 日志文本框（黑色背景、绿色字体，模拟终端风格）
+            txtLog.Multiline    = true;
+            txtLog.ScrollBars   = ScrollBars.Vertical;
+            txtLog.ReadOnly     = true;
+            txtLog.Location     = new System.Drawing.Point(10, 45);
+            txtLog.Width        = 760;
+            txtLog.Height       = 80;
+            txtLog.BackColor    = System.Drawing.Color.Black;
+            txtLog.ForeColor    = System.Drawing.Color.Lime;
+            txtLog.Font         = new System.Drawing.Font("Consolas", 8);
 
             var pnlBottom = new Panel { Dock = DockStyle.Bottom, Height = 135 };
             pnlBottom.Controls.Add(btnRun);
             pnlBottom.Controls.Add(btnSave);
             pnlBottom.Controls.Add(txtLog);
 
-            // ===== MAIN FORM =====
-            this.Text = "FlowSim – 一维水动力仿真";
-            this.Size = new System.Drawing.Size(900, 650);
+            // ===== 主窗体设置 =====
+            this.Text        = "FlowSim – 一维水动力仿真";
+            this.Size        = new System.Drawing.Size(900, 650);
             this.MinimumSize = new System.Drawing.Size(700, 500);
             this.Controls.Add(tabControl);
             this.Controls.Add(pnlBottom);
 
-            this.ResumeLayout(false);
+            this.ResumeLayout(false);   // 恢复布局计算并立即执行
         }
 
+        /// <summary>
+        /// 配置数字输入框（NumericUpDown）的通用参数。
+        /// 统一设置最小值、最大值、小数位数、步长、当前值和停靠样式。
+        /// </summary>
+        /// <param name="num">要配置的 NumericUpDown 控件。</param>
+        /// <param name="value">初始值（当前值）。</param>
+        /// <param name="min">允许的最小值。</param>
+        /// <param name="max">允许的最大值。</param>
+        /// <param name="decimals">小数位数（0 表示整数）。</param>
+        /// <param name="increment">每次点击增减的步长。</param>
         private static void ConfigNum(NumericUpDown num, decimal value, decimal min, decimal max, int decimals, decimal increment)
         {
-            num.Minimum = min; num.Maximum = max;
-            num.DecimalPlaces = decimals; num.Increment = increment;
-            num.Value = value; num.Dock = DockStyle.Fill;
+            num.Minimum       = min;
+            num.Maximum       = max;
+            num.DecimalPlaces = decimals;
+            num.Increment     = increment;
+            num.Value         = value;
+            num.Dock          = DockStyle.Fill;   // 充满所在单元格
         }
 
-        // ---- Controls ----
+        // ---- 控件字段声明 ----
         private TabControl tabControl;
         private TabPage tabChannel, tabBoundary, tabSolver, tabResults;
         private NumericUpDown numLength, numWidth, numRoughness, numInitialFlow;
