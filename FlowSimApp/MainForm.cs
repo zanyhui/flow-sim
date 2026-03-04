@@ -21,15 +21,15 @@ namespace FlowSim
             btnRun.Enabled = false;
             btnSave.Enabled = false;
             txtLog.Clear();
-            Log("Building simulation...");
+            Log("正在构建仿真...");
 
             try
             {
                 var solver = BuildSolver();
                 _solver = solver;
 
-                Log("Running simulation...");
-                // Run on background thread to keep UI responsive
+                Log("正在运行仿真...");
+                // 在后台线程运行仿真，保持 UI 响应
                 Task.Run(() =>
                 {
                     try
@@ -37,7 +37,7 @@ namespace FlowSim
                         _solver.Run(verbose: 1);
                         Invoke(() =>
                         {
-                            Log("Simulation completed successfully.");
+                            Log("仿真成功完成。");
                             UpdateResults();
                             btnSave.Enabled = true;
                             btnRun.Enabled = true;
@@ -47,7 +47,7 @@ namespace FlowSim
                     {
                         Invoke(() =>
                         {
-                            Log($"ERROR: {ex.Message}");
+                            Log($"错误：{ex.Message}");
                             btnRun.Enabled = true;
                         });
                     }
@@ -55,7 +55,7 @@ namespace FlowSim
             }
             catch (Exception ex)
             {
-                Log($"Setup ERROR: {ex.Message}");
+                Log($"初始化错误：{ex.Message}");
                 btnRun.Enabled = true;
             }
         }
@@ -63,17 +63,17 @@ namespace FlowSim
         private void btnSave_Click(object sender, EventArgs e)
         {
             if (_solver == null || !_solver.Solved) return;
-            using var dlg = new FolderBrowserDialog { Description = "Select output folder" };
+            using var dlg = new FolderBrowserDialog { Description = "选择输出文件夹" };
             if (dlg.ShowDialog() == DialogResult.OK)
             {
                 try
                 {
                     _solver.SaveResults(dlg.SelectedPath, "results.xlsx");
-                    Log($"Results saved to: {dlg.SelectedPath}");
+                    Log($"结果已保存至：{dlg.SelectedPath}");
                 }
                 catch (Exception ex)
                 {
-                    Log($"Save ERROR: {ex.Message}");
+                    Log($"保存错误：{ex.Message}");
                 }
             }
         }
@@ -89,19 +89,19 @@ namespace FlowSim
             double dsBedLevel = (double)numDsBedLevel.Value;
             double dsDepth = (double)numDsDepth.Value;
 
-            // --- Upstream BC ---
+            // --- 上游边界条件 ---
             Hydrograph? usHydrograph = null;
             BoundaryConditionType usBcType;
             switch (cmbUsBcType.SelectedIndex)
             {
-                case 0:
+                case 0:  // 流量过程线
                     usBcType = BoundaryConditionType.FlowHydrograph;
                     usHydrograph = BuildTriangularHydrograph(
                         (double)numPeakFlow.Value,
                         (double)numRiseTime.Value * 3600,
                         (double)numSimTime.Value * 3600);
                     break;
-                case 1:
+                case 1:  // 正常水深
                     usBcType = BoundaryConditionType.NormalDepth;
                     break;
                 default:
@@ -110,12 +110,12 @@ namespace FlowSim
                     break;
             }
 
-            // --- Downstream BC ---
+            // --- 下游边界条件 ---
             BoundaryConditionType dsBcType;
             switch (cmbDsBcType.SelectedIndex)
             {
-                case 0: dsBcType = BoundaryConditionType.NormalDepth; break;
-                case 1: dsBcType = BoundaryConditionType.FixedDepth; break;
+                case 0: dsBcType = BoundaryConditionType.NormalDepth; break;   // 正常水深
+                case 1: dsBcType = BoundaryConditionType.FixedDepth; break;    // 固定水深
                 default: dsBcType = BoundaryConditionType.NormalDepth; break;
             }
 
@@ -127,7 +127,7 @@ namespace FlowSim
             var channel = new Channel(usBoundary, dsBoundary, initialFlow, roughness, width,
                                       InitializationMethod.GVFEquation);
 
-            // --- Solver settings ---
+            // --- 求解器设置 ---
             double timeStep = (double)numTimeStep.Value;
             double spatialStep = (double)numSpatialStep.Value;
             double simTime = (double)numSimTime.Value * 3600;
@@ -167,13 +167,13 @@ namespace FlowSim
             double dt = _solver.TimeStep;
             double[] distance = _solver.Channel.ChAtNode!;
 
-            // --- Plot flow hydrograph at upstream, middle, downstream ---
+            // --- 绘制上游/中部/下游流量过程线 ---
             plotFlow.Plot.Clear();
             double[] times = new double[nk];
             for (int k = 0; k < nk; k++) times[k] = k * dt / 3600.0;
 
             int[] plotNodes = { 0, nn / 2, nn - 1 };
-            string[] nodeLabels = { "Upstream", "Middle", "Downstream" };
+            string[] nodeLabels = { "上游", "中部", "下游" };
             var colors = new[] { Color.Blue, Color.Green, Color.Red };
             for (int n = 0; n < plotNodes.Length; n++)
             {
@@ -184,13 +184,13 @@ namespace FlowSim
                 scatter.Color = colors[n];
                 scatter.MarkerSize = 0;
             }
-            plotFlow.Plot.XLabel("Time (h)");
-            plotFlow.Plot.YLabel("Flow (m³/s)");
-            plotFlow.Plot.Title("Flow Hydrographs");
+            plotFlow.Plot.XLabel("时间（h）");
+            plotFlow.Plot.YLabel("流量（m³/s）");
+            plotFlow.Plot.Title("流量过程线");
             plotFlow.Plot.Legend();
             plotFlow.Refresh();
 
-            // --- Plot water level profile at peak time ---
+            // --- 绘制峰值时刻水面纵剖面 ---
             plotProfile.Plot.Clear();
             int peakTimeIndex = 0;
             double peakQ = 0;
@@ -204,17 +204,17 @@ namespace FlowSim
             var distKm = new double[distance.Length];
             for (int i = 0; i < distance.Length; i++) distKm[i] = distance[i] / 1000.0;
 
-            var wlScatter = plotProfile.Plot.AddScatter(distKm, levels, label: "Water level @ peak");
+            var wlScatter = plotProfile.Plot.AddScatter(distKm, levels, label: "峰值水位");
             wlScatter.Color = Color.Blue; wlScatter.MarkerSize = 0;
-            var bedScatter = plotProfile.Plot.AddScatter(distKm, bed, label: "Bed level");
+            var bedScatter = plotProfile.Plot.AddScatter(distKm, bed, label: "床底高程");
             bedScatter.Color = Color.SaddleBrown; bedScatter.MarkerSize = 0;
-            plotProfile.Plot.XLabel("Distance (km)");
-            plotProfile.Plot.YLabel("Elevation (m)");
-            plotProfile.Plot.Title("Water Level Profile at Peak");
+            plotProfile.Plot.XLabel("距离（km）");
+            plotProfile.Plot.YLabel("高程（m）");
+            plotProfile.Plot.Title("峰值水面纵剖面");
             plotProfile.Plot.Legend();
             plotProfile.Refresh();
 
-            // --- Summary statistics ---
+            // --- 统计汇总 ---
             double peakIn = 0, peakOut = 0, sumQin = 0, massImbVol = 0;
             for (int k = 0; k < nk; k++)
             {
@@ -228,14 +228,14 @@ namespace FlowSim
             double massImbPct = totalInflowVol > 0 ? massImbVol / totalInflowVol * 100 : 0;
 
             gridSummary.Rows.Clear();
-            gridSummary.Rows.Add("Spatial step (m)", $"{_solver.SpatialStep:F1}");
-            gridSummary.Rows.Add("Time step (s)", $"{_solver.TimeStep:F1}");
-            gridSummary.Rows.Add("Number of nodes", _solver.NumberOfNodes);
-            gridSummary.Rows.Add("Number of time levels", _solver.TimeLevel + 1);
-            gridSummary.Rows.Add("Peak inflow (m³/s)", $"{peakIn:F2}");
-            gridSummary.Rows.Add("Peak outflow (m³/s)", $"{peakOut:F2}");
-            gridSummary.Rows.Add("Attenuation (%)", $"{atten:F2}");
-            gridSummary.Rows.Add("Mass imbalance (%)", $"{massImbPct:F4}");
+            gridSummary.Rows.Add("空间步长（m）", $"{_solver.SpatialStep:F1}");
+            gridSummary.Rows.Add("时间步长（s）", $"{_solver.TimeStep:F1}");
+            gridSummary.Rows.Add("节点数量", _solver.NumberOfNodes);
+            gridSummary.Rows.Add("时间步数", _solver.TimeLevel + 1);
+            gridSummary.Rows.Add("峰值入流（m³/s）", $"{peakIn:F2}");
+            gridSummary.Rows.Add("峰值出流（m³/s）", $"{peakOut:F2}");
+            gridSummary.Rows.Add("洪峰削减率（%）", $"{atten:F2}");
+            gridSummary.Rows.Add("质量不平衡（%）", $"{massImbPct:F4}");
         }
 
         private void Log(string message)

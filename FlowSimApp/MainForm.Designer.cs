@@ -19,10 +19,10 @@ namespace FlowSim
         {
             components = new System.ComponentModel.Container();
             this.tabControl = new TabControl();
-            this.tabChannel = new TabPage("Channel Setup");
-            this.tabBoundary = new TabPage("Boundary Conditions");
-            this.tabSolver = new TabPage("Solver Settings");
-            this.tabResults = new TabPage("Results");
+            this.tabChannel = new TabPage("河道设置");
+            this.tabBoundary = new TabPage("边界条件");
+            this.tabSolver = new TabPage("求解器设置");
+            this.tabResults = new TabPage("结果");
 
             // ---- Channel Setup controls ----
             this.numLength      = new NumericUpDown();
@@ -89,12 +89,12 @@ namespace FlowSim
             ConfigNum(numUsBedLevel, 10, -1000, 10000, 1, 10);
             ConfigNum(numDsBedLevel, 8, -1000, 10000, 1, 8);
 
-            AddRow(pnlChannel, "Channel length (m):", numLength);
-            AddRow(pnlChannel, "Channel width (m):", numWidth);
-            AddRow(pnlChannel, "Manning's roughness n:", numRoughness);
-            AddRow(pnlChannel, "Initial flow rate (m³/s):", numInitialFlow);
-            AddRow(pnlChannel, "Upstream bed level (m):", numUsBedLevel);
-            AddRow(pnlChannel, "Downstream bed level (m):", numDsBedLevel);
+            AddRow(pnlChannel, "河道长度（m）：", numLength);
+            AddRow(pnlChannel, "河道宽度（m）：", numWidth);
+            AddRow(pnlChannel, "曼宁糙率 n：", numRoughness);
+            AddRow(pnlChannel, "初始流量（m³/s）：", numInitialFlow);
+            AddRow(pnlChannel, "上游床底高程（m）：", numUsBedLevel);
+            AddRow(pnlChannel, "下游床底高程（m）：", numDsBedLevel);
 
             tabChannel.Controls.Add(pnlChannel);
 
@@ -109,10 +109,10 @@ namespace FlowSim
             pnlBoundary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             pnlBoundary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
 
-            cmbUsBcType.Items.AddRange(new[] { "Flow Hydrograph", "Normal Depth" });
+            cmbUsBcType.Items.AddRange(new[] { "流量过程线", "正常水深" });
             cmbUsBcType.SelectedIndex = 0; cmbUsBcType.DropDownStyle = ComboBoxStyle.DropDownList;
 
-            cmbDsBcType.Items.AddRange(new[] { "Normal Depth", "Fixed Depth" });
+            cmbDsBcType.Items.AddRange(new[] { "正常水深", "固定水深" });
             cmbDsBcType.SelectedIndex = 0; cmbDsBcType.DropDownStyle = ComboBoxStyle.DropDownList;
 
             ConfigNum(numPeakFlow, 1000, 0, 1000000, 0, 1000);
@@ -125,15 +125,15 @@ namespace FlowSim
                 p.Controls.Add(ctrl);
             }
 
-            pnlBoundary.Controls.Add(new Label { Text = "─── Upstream ───", Font = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold) });
+            pnlBoundary.Controls.Add(new Label { Text = "─── 上游 ───", Font = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold) });
             pnlBoundary.Controls.Add(new Label());
-            AddRow2(pnlBoundary, "Upstream BC type:", cmbUsBcType);
-            AddRow2(pnlBoundary, "Peak flow (m³/s):", numPeakFlow);
-            AddRow2(pnlBoundary, "Rise time (hours):", numRiseTime);
-            pnlBoundary.Controls.Add(new Label { Text = "─── Downstream ───", Font = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold) });
+            AddRow2(pnlBoundary, "上游边界条件类型：", cmbUsBcType);
+            AddRow2(pnlBoundary, "峰值流量（m³/s）：", numPeakFlow);
+            AddRow2(pnlBoundary, "起涨时间（小时）：", numRiseTime);
+            pnlBoundary.Controls.Add(new Label { Text = "─── 下游 ───", Font = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold) });
             pnlBoundary.Controls.Add(new Label());
-            AddRow2(pnlBoundary, "Downstream BC type:", cmbDsBcType);
-            AddRow2(pnlBoundary, "Initial/fixed depth (m):", numDsDepth);
+            AddRow2(pnlBoundary, "下游边界条件类型：", cmbDsBcType);
+            AddRow2(pnlBoundary, "初始/固定水深（m）：", numDsDepth);
 
             tabBoundary.Controls.Add(pnlBoundary);
 
@@ -157,12 +157,12 @@ namespace FlowSim
             ConfigNum(numSimTime, 24, 1, 720, 0, 24);
             ConfigNum(numTheta, 0.6m, 0.5m, 1.0m, 2, 0.6m);
 
-            AddRow(pnlSolver, "Time step (s):", numTimeStep);
-            pnlSolver.Controls.Add(new Label { Text = "Solver method:", AutoSize = true });
+            AddRow(pnlSolver, "时间步长（s）：", numTimeStep);
+            pnlSolver.Controls.Add(new Label { Text = "求解方法：", AutoSize = true });
             pnlSolver.Controls.Add(cmbSolverMethod);
-            AddRow(pnlSolver, "Spatial step (m):", numSpatialStep);
-            AddRow(pnlSolver, "Simulation time (hours):", numSimTime);
-            AddRow(pnlSolver, "Theta (Preissmann):", numTheta);
+            AddRow(pnlSolver, "空间步长（m）：", numSpatialStep);
+            AddRow(pnlSolver, "模拟时长（小时）：", numSimTime);
+            AddRow(pnlSolver, "θ 参数（Preissmann）：", numTheta);
 
             tabSolver.Controls.Add(pnlSolver);
 
@@ -187,8 +187,8 @@ namespace FlowSim
 
             gridSummary.Dock = DockStyle.Fill;
             gridSummary.ColumnCount = 2;
-            gridSummary.Columns[0].Name = "Parameter";
-            gridSummary.Columns[1].Name = "Value";
+            gridSummary.Columns[0].Name = "参数";
+            gridSummary.Columns[1].Name = "数值";
             gridSummary.Columns[0].Width = 250;
             gridSummary.Columns[1].Width = 150;
             gridSummary.AllowUserToAddRows = false;
@@ -201,7 +201,7 @@ namespace FlowSim
             tabResults.Controls.Add(splitResults);
 
             // ===== BUTTONS & LOG =====
-            btnRun.Text = "▶ Run Simulation";
+            btnRun.Text = "▶ 运行仿真";
             btnRun.Size = new System.Drawing.Size(150, 35);
             btnRun.Location = new System.Drawing.Point(10, 5);
             btnRun.Click += btnRun_Click;
@@ -209,7 +209,7 @@ namespace FlowSim
             btnRun.ForeColor = System.Drawing.Color.White;
             btnRun.FlatStyle = FlatStyle.Flat;
 
-            btnSave.Text = "💾 Save Results";
+            btnSave.Text = "💾 保存结果";
             btnSave.Size = new System.Drawing.Size(150, 35);
             btnSave.Location = new System.Drawing.Point(170, 5);
             btnSave.Click += btnSave_Click;
@@ -232,7 +232,7 @@ namespace FlowSim
             pnlBottom.Controls.Add(txtLog);
 
             // ===== MAIN FORM =====
-            this.Text = "FlowSim – 1D Hydraulic Simulation";
+            this.Text = "FlowSim – 一维水动力仿真";
             this.Size = new System.Drawing.Size(900, 650);
             this.MinimumSize = new System.Drawing.Size(700, 500);
             this.Controls.Add(tabControl);
