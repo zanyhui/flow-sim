@@ -293,5 +293,21 @@ namespace FlowSim.Models
             // 梯形积分 ΔV = ∫ A(y) dy
             return Hydraulics.Trapezoid(areas, ys);
         }
+
+        /// <summary>
+        /// 计算给定水位处水库水面面积对水位的导数 dA/dY。
+        /// 若无面积曲线则返回 0；否则对面积梯度曲线进行线性插值。
+        /// 与 Python <c>lumped_storage.dA_dY(stage)</c> 对应。
+        /// </summary>
+        /// <param name="stage">水位（m）。</param>
+        /// <returns>dA/dY（m²/m = m）。</returns>
+        public double DAdy(double stage)
+        {
+            if (AreaCurve == null || _areaCurveStages == null || _areaCurveAreas == null)
+                return 0.0;
+            // 与 Python np.gradient 对应：对面积曲线进行数值梯度计算后插值
+            double[] grad = Hydraulics.Gradient(_areaCurveAreas, _areaCurveStages);
+            return _alpha * Hydraulics.Interp(stage, _areaCurveStages, grad);
+        }
     }
 }

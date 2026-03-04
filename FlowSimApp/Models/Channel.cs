@@ -66,6 +66,10 @@ namespace FlowSim.Models
         private double[]? _xsChainages;
         private CrossSection[]? _inputXs;
 
+        // 河道水平坐标（用于弯道曲率计算）
+        private double[,]? _coords;          // [n, 2]：每行 (x, y) 坐标（m）
+        private double[]? _coordsChainages;  // 对应坐标点的桩号（m）
+
         /// <summary>
         /// 构造河道对象，设置上下游边界和基本参数。
         /// </summary>
@@ -100,6 +104,21 @@ namespace FlowSim.Models
                 throw new ArgumentException("Chainages and sections must have same length.");
             _xsChainages = chainages;
             _inputXs = sections;
+        }
+
+        /// <summary>
+        /// 设置河道水平坐标线，用于计算断面处的弯道曲率。
+        /// 与 Python <c>channel.set_coords(coords, chainages)</c> 对应。
+        /// 坐标设置后，下次 <see cref="InitializeConditions"/> 时将自动为各输入断面赋予曲率值。
+        /// </summary>
+        /// <param name="coords">河道中心线坐标数组 [n, 2]，每行为 (x, y)（m）。</param>
+        /// <param name="chainages">对应坐标点的桩号数组（m），长度须与 coords 行数相等。</param>
+        public void SetCoords(double[,] coords, double[] chainages)
+        {
+            if (coords.GetLength(0) != chainages.Length)
+                throw new ArgumentException("coords rows and chainages must have same length.");
+            _coords = coords;
+            _coordsChainages = chainages;
         }
 
         /// <summary>
@@ -185,6 +204,10 @@ namespace FlowSim.Models
             if (_xsChainages == null || _inputXs == null)
                 _createProvisionalCrossSections();
 
+            // 若已设置水平坐标，则为各输入断面计算弯道曲率
+            if (_coords != null && _coordsChainages != null)
+                _calcCurvature();
+
             // 生成均匀分布的节点桩号
             ChAtNode = Linspace(UpstreamBoundary.Chainage, DownstreamBoundary.Chainage, nNodes);
 
@@ -213,6 +236,66 @@ namespace FlowSim.Models
 
             _xsChainages = new[] { UpstreamBoundary.Chainage, DownstreamBoundary.Chainage };
             _inputXs = new CrossSection[] { usXs, dsXs };
+        }
+
+        /// <summary>
+        /// 根据河道水平坐标（通过 <see cref="SetCoords"/> 设置）计算各输入断面处的弯道曲率，
+        /// 并将曲率值赋予对应 <see cref="CrossSection.Curvature"/> 属性。
+        /// <para>
+        /// 与 Python <c>channel._calc_curvature()</c> 对应。
+        /// 算法：对每个中间断面（非端部），取左中右三个桩号对应的平面坐标，
+        /// 用转向角 θ 和平均弦长 L 估算曲率 κ = 2·sin(θ/2)/L，
+        /// 符号由右手叉积决定（左转为正，右转为负）。
+        /// </para>
+        /// </summary>
+        private void _calcCurvature()
+        {
+            if (_inputXs == null || _xsChainages == null || _coords == null || _coordsChainages == null)
+                return;
+
+            int nCoords = _coordsChainages.Length;
+            double[] cxs = new double[nCoords];   // 坐标 x 列
+            double[] cys = new double[nCoords];   // 坐标 y 列
+            for (int k = 0; k < nCoords; k++)
+            {
+                cxs[k] = _coords[k, 0];
+                cys[k] = _coords[k, 1];
+            }
+
+            // 对每个中间断面（跳过首尾端部）计算曲率
+            for (int i = 1; i < _inputXs.Length - 1; i++)
+            {
+                double chLeft  = _xsChainages[i - 1];
+                double chMid   = _xsChainages[i];
+                double chRight = _xsChainages[i + 1];
+
+                // 从坐标线上插值得到三点坐标
+                double xL = Hydraulics.Interp(chLeft,  _coordsChainages, cxs);
+                double yL = Hydraulics.Interp(chLeft,  _coordsChainages, cys);
+                double xM = Hydraulics.Interp(chMid,   _coordsChainages, cxs);
+                double yM = Hydraulics.Interp(chMid,   _coordsChainages, cys);
+                double xR = Hydraulics.Interp(chRight, _coordsChainages, cxs);
+                double yR = Hydraulics.Interp(chRight, _coordsChainages, cys);
+
+                // 方向向量 v1 = M-L，v2 = R-M
+                double v1x = xM - xL, v1y = yM - yL;
+                double v2x = xR - xM, v2y = yR - yM;
+                double len1 = Math.Sqrt(v1x * v1x + v1y * v1y);
+                double len2 = Math.Sqrt(v2x * v2x + v2y * v2y);
+
+                if (len1 < 1e-12 || len2 < 1e-12) { _inputXs[i].Curvature = 0.0; continue; }
+
+                // 余弦 → 转向角 θ，叉积决定符号
+                double dot   = v1x * v2x + v1y * v2y;
+                double cosTheta = Math.Max(-1.0, Math.Min(1.0, dot / (len1 * len2)));
+                double theta = Math.Acos(cosTheta);
+                double cross = v1x * v2y - v1y * v2x;   // 2D 叉积（z 分量）
+
+                // 平均弦长，κ = 2·sin(θ/2) / L
+                double L = 0.5 * (len1 + len2);
+                double curvature = 2.0 * Math.Sin(theta / 2.0) / L * Math.Sign(cross);
+                _inputXs[i].Curvature = curvature;
+            }
         }
 
         /// <summary>

@@ -202,15 +202,27 @@ namespace FlowSim.Models
                 return hwMax - zMin;  // 超出上限，返回最大水深
             }
         }
+
+        /// <summary>获取糙率参数元组 (NLeft, NMain, NRight, LeftFpLimit, RightFpLimit)。</summary>
+        public (double nLeft, double nMain, double nRight, double leftFpLimit, double rightFpLimit) GetRoughnessPara()
+            => (NLeft, NMain, NRight, LeftFpLimit, RightFpLimit);
+
+        /// <summary>批量设置糙率参数 (NLeft, NMain, NRight, LeftFpLimit, RightFpLimit)。</summary>
+        public void SetRoughnessPara((double nLeft, double nMain, double nRight, double leftFpLimit, double rightFpLimit) parameters)
+        {
+            NLeft        = parameters.nLeft;
+            NMain        = parameters.nMain;
+            NRight       = parameters.nRight;
+            LeftFpLimit  = parameters.leftFpLimit;
+            RightFpLimit = parameters.rightFpLimit;
+        }
     }
 
     /// <summary>
-    /// 梯形断面（规则断面）。
+    /// 梯形断面（规则断面），支持简单矩形、简单梯形和复式梯形（主槽 + 左右滩区）。
     /// <para>
-    /// 几何参数：底宽 bMain（m）、边坡系数 mMain（水平:竖直）、床底高程 zBed（m）。
-    /// 面积公式：A = (bMain + mMain·h)·h；
-    /// 湿周公式：P = bMain + 2h·sqrt(1 + mMain²)；
-    /// 水面宽公式：T = bMain + 2·mMain·h。
+    /// 简单模式几何：底宽 bMain（m）、边坡系数 mMain（水平:竖直）、床底高程 zBed（m）。
+    /// 复式模式需额外提供滩面高程 zBank、滩区底宽（bFpLeft/bFpRight）和滩区边坡 mFp。
     /// </para>
     /// </summary>
     public class TrapezoidalSection : CrossSection
@@ -219,22 +231,88 @@ namespace FlowSim.Models
         private readonly double _mMain;   // 边坡系数（水平/竖直）
         private readonly double _zBed;    // 床底高程（m）
 
+        // 复式断面参数
+        private readonly bool   _isCompound;      // 是否为复式断面
+        private readonly bool   _isRect;           // 是否为矩形断面（m=0 且非复式）
+        private readonly double _zBank;            // 滩面高程（m）
+        private readonly double _bFpLeft;          // 左侧滩区底宽（m）
+        private readonly double _bFpRight;         // 右侧滩区底宽（m）
+        private readonly double _mFp;              // 滩区外侧边坡系数
+        private readonly double _bankfullDepth;    // 平滩水深 = zBank - zBed
+        private readonly double _tMainAtBank;      // 平滩时主槽水面宽
+        private readonly double _widthAtBank;      // 平滩时总断面宽（含滩区）
+
+        /// <summary>边坡系数（水平/竖直）。</summary>
+        public double MMain => _mMain;
+        /// <summary>底宽（m）。</summary>
+        public double BMain => _bMain;
+        /// <summary>是否为复式断面。</summary>
+        public bool IsCompound => _isCompound;
+        /// <summary>滩面高程（m），仅复式断面有效。</summary>
+        public double ZBank => _zBank;
+        /// <summary>左侧滩区底宽（m）。</summary>
+        public double BFpLeft => _bFpLeft;
+        /// <summary>右侧滩区底宽（m）。</summary>
+        public double BFpRight => _bFpRight;
+        /// <summary>滩区外侧边坡系数。</summary>
+        public double MFp => _mFp;
+
         /// <summary>
-        /// 构造梯形断面。
+        /// 构造梯形断面（支持简单矩形/梯形和复式梯形）。
         /// </summary>
         /// <param name="bMain">底宽（m）。</param>
-        /// <param name="mMain">边坡系数（1:mMain，即每升高 1 m 水平扩展 mMain m；矩形为 0）。</param>
+        /// <param name="mMain">边坡系数（1:mMain；矩形为 0）。</param>
         /// <param name="zBed">床底高程（m）。</param>
-        /// <param name="nMain">曼宁糙率系数。</param>
+        /// <param name="nMain">主槽曼宁糙率系数。</param>
         /// <param name="bedSlope">河床纵坡（可选）。</param>
         /// <param name="curvature">弯道曲率（可选，默认 0）。</param>
+        /// <param name="zBank">滩面高程（m）；非 null 时启用复式断面。</param>
+        /// <param name="bFpLeft">左侧滩区底宽（m）。</param>
+        /// <param name="bFpRight">右侧滩区底宽（m）。</param>
+        /// <param name="mFp">滩区外侧边坡系数。</param>
+        /// <param name="nLeft">左滩区曼宁糙率。</param>
+        /// <param name="nRight">右滩区曼宁糙率。</param>
         public TrapezoidalSection(double bMain, double mMain, double zBed, double nMain,
-                                   double? bedSlope = null, double curvature = 0.0)
+                                   double? bedSlope = null, double curvature = 0.0,
+                                   double? zBank = null, double bFpLeft = 0.0, double bFpRight = 0.0,
+                                   double mFp = 0.0, double nLeft = 0.03, double nRight = 0.03)
             : base(nMain, bedSlope, curvature)
         {
             _bMain = bMain;
             _mMain = mMain;
-            _zBed = zBed;
+            _zBed  = zBed;
+
+            if (zBank.HasValue)
+            {
+                if (zBank.Value <= zBed)
+                    throw new ArgumentException("滩面高程 zBank 必须高于床底高程 zBed");
+
+                _isCompound    = true;
+                _zBank         = zBank.Value;
+                _bFpLeft       = bFpLeft;
+                _bFpRight      = bFpRight;
+                _mFp           = mFp;
+                _bankfullDepth = _zBank - _zBed;
+                _tMainAtBank   = _bMain + 2.0 * _mMain * _bankfullDepth;
+                LeftFpLimit    = -_tMainAtBank / 2.0;
+                RightFpLimit   =  _tMainAtBank / 2.0;
+                _widthAtBank   = _bFpLeft + _tMainAtBank + _bFpRight;
+
+                NLeft  = nLeft;
+                NRight = nRight;
+            }
+            else
+            {
+                _isCompound    = false;
+                _zBank         = 0;
+                _bFpLeft = _bFpRight = _mFp = 0;
+                _bankfullDepth = _tMainAtBank = _widthAtBank = 0;
+
+                // 简单断面：左/右滩区糙率与主槽相同
+                NLeft = NRight = NMain;
+            }
+
+            _isRect = !_isCompound && mMain == 0.0;
         }
 
         /// <summary>床底高程 = zBed。</summary>
@@ -244,32 +322,156 @@ namespace FlowSim.Models
         public override double Width => _bMain;
 
         /// <summary>
-        /// 计算给定水位 hw 处的梯形断面几何参数。
-        /// 当水位低于床底时，所有参数均为 0。
+        /// 计算给定水位 hw 处的断面几何参数，支持三种情形：
+        /// 1) 矩形（m=0 且非复式）；2) 简单梯形；3) 复式梯形（含左/右滩区）。
         /// </summary>
-        /// <param name="hw">绝对水位（m）。</param>
-        /// <returns>(A, P, R, T) 四元组。</returns>
         public override (double A, double P, double R, double T) Properties(double hw)
         {
-            double h = hw - _zBed;           // 相对水深（m）
-            if (h <= 0) return (0, 0, 0, 0); // 干断面返回零
+            if (_lastHw.HasValue && _lastHw.Value == hw && _lastRes.HasValue)
+                return _lastRes.Value;
 
-            double T = _bMain + 2.0 * _mMain * h;                          // 水面宽 T = bMain + 2·mMain·h
-            double A = (_bMain + _mMain * h) * h;                          // 过水面积 A = (b + m·h)·h
-            double P = _bMain + 2.0 * h * Math.Sqrt(1.0 + _mMain * _mMain); // 湿周 P = b + 2h·sqrt(1+m²)
-            double R = P > 0 ? A / P : 0;                                  // 水力半径 R = A/P
-            return (A, P, R, T);
+            double depth = Math.Max(0.0, hw - _zBed);
+            if (depth <= 0.0)
+            {
+                var r0 = (0.0, 0.0, 0.0, 0.0);
+                _lastHw = hw; _lastRes = r0;
+                return r0;
+            }
+
+            double A, P, T;
+
+            if (_isRect)
+            {
+                // 矩形断面
+                A = _bMain * depth;
+                P = _bMain + 2.0 * depth;
+                T = _bMain;
+            }
+            else if (!_isCompound)
+            {
+                // 简单梯形断面
+                T = _bMain + 2.0 * _mMain * depth;
+                A = (_bMain + T) / 2.0 * depth;
+                P = _bMain + 2.0 * depth * Math.Sqrt(1.0 + _mMain * _mMain);
+            }
+            else
+            {
+                // 复式梯形断面
+                if (depth <= _bankfullDepth)
+                {
+                    // 水位低于平滩：只有主槽过水
+                    T = _bMain + 2.0 * _mMain * depth;
+                    A = (_bMain + T) / 2.0 * depth;
+                    P = _bMain + 2.0 * depth * Math.Sqrt(1.0 + _mMain * _mMain);
+                }
+                else
+                {
+                    // 水位超过平滩：主槽 + 左/右滩区均过水
+                    double depthFp = depth - _bankfullDepth;
+
+                    // 主槽（满槽，仅计算至滩面）
+                    double aMain = (_bMain + _tMainAtBank) / 2.0 * _bankfullDepth;
+                    double pMain = _bMain + 2.0 * _bankfullDepth * Math.Sqrt(1.0 + _mMain * _mMain);
+
+                    // 左侧滩区（梯形，A = (底宽 + 顶宽)/2 * 高 = (b + b+m*h)/2 * h = (b + 0.5*m*h)*h）
+                    double aLeft  = (_bFpLeft  + 0.5 * _mFp * depthFp) * depthFp;
+                    double pLeft  = _bFpLeft  + depthFp * Math.Sqrt(1.0 + _mFp * _mFp);
+
+                    // 右侧滩区（梯形）
+                    double aRight = (_bFpRight + 0.5 * _mFp * depthFp) * depthFp;
+                    double pRight = _bFpRight + depthFp * Math.Sqrt(1.0 + _mFp * _mFp);
+
+                    A = aMain + aLeft + aRight;
+                    P = pMain + pLeft + pRight;
+                    T = _widthAtBank + 2.0 * _mFp * depthFp;
+                }
+            }
+
+            double R = P > 0.0 ? A / P : 0.0;
+            var res = (A, P, R, T);
+            _lastHw = hw; _lastRes = res;
+            return res;
         }
 
-        /// <summary>梯形断面等效糙率即主槽糙率 NMain（均匀断面无分区）。</summary>
-        public override double GetEquivalentN(double hw) => NMain;
+        /// <summary>
+        /// 获取复式断面各子区（左滩、主槽、右滩）的 (A, P_床底, R) 参数，
+        /// 用于 Lotter 组合输水能力计算。简单断面返回 ((0,0,0), (A,P,R), (0,0,0))。
+        /// </summary>
+        private ((double A, double P, double R) left,
+                 (double A, double P, double R) main,
+                 (double A, double P, double R) right)
+            GetSubsectionProps(double hw)
+        {
+            double depth = Math.Max(0.0, hw - _zBed);
+            if (depth <= 0.0) return ((0, 0, 0), (0, 0, 0), (0, 0, 0));
 
-        /// <summary>计算输水能力 K = A·R^(2/3)/n。</summary>
+            if (!_isCompound || depth <= _bankfullDepth)
+            {
+                var (A, P, R, _) = Properties(hw);
+                return ((0, 0, 0), (A, P, R), (0, 0, 0));
+            }
+
+            double depthFp = depth - _bankfullDepth;
+
+            // 主槽（含滩面以上矩形延伸部分）
+            double aMain    = (_bMain + _tMainAtBank) / 2.0 * _bankfullDepth + _tMainAtBank * depthFp;
+            double pMainBed = _bMain + 2.0 * _bankfullDepth * Math.Sqrt(1.0 + _mMain * _mMain);
+            double rMain    = pMainBed > 0 ? aMain / pMainBed : 0.0;
+
+            // 左侧滩区
+            double aLeft    = (_bFpLeft  + 0.5 * _mFp * depthFp) * depthFp;
+            double pLeftBed = _bFpLeft  + depthFp * Math.Sqrt(1.0 + _mFp * _mFp);
+            double rLeft    = pLeftBed  > 0 ? aLeft  / pLeftBed  : 0.0;
+
+            // 右侧滩区
+            double aRight    = (_bFpRight + 0.5 * _mFp * depthFp) * depthFp;
+            double pRightBed = _bFpRight  + depthFp * Math.Sqrt(1.0 + _mFp * _mFp);
+            double rRight    = pRightBed  > 0 ? aRight / pRightBed : 0.0;
+
+            return ((aLeft, pLeftBed, rLeft), (aMain, pMainBed, rMain), (aRight, pRightBed, rRight));
+        }
+
+        /// <summary>
+        /// 等效曼宁糙率：简单断面直接返回 NMain；
+        /// 复式断面使用 Lotter（Horton-Einstein）方法合成。
+        /// </summary>
+        public override double GetEquivalentN(double hw)
+        {
+            if (!_isCompound) return NMain;
+
+            var (left, main, right) = GetSubsectionProps(hw);
+            double kLeft  = Hydraulics.Conveyance(left.A,  NLeft,  left.R);
+            double kMain  = Hydraulics.Conveyance(main.A,  NMain,  main.R);
+            double kRight = Hydraulics.Conveyance(right.A, NRight, right.R);
+
+            var (aTotal, _, rTotal, _) = Properties(hw);
+            if (aTotal <= 0 || rTotal <= 0) return NMain;
+
+            // Lotter（Horton-Einstein）公式：K_total = (K_L^1.5 + K_M^1.5 + K_R^1.5)^(2/3)
+            double kTotal = Math.Pow(Math.Pow(kLeft, 1.5) + Math.Pow(kMain, 1.5) + Math.Pow(kRight, 1.5), 2.0 / 3.0);
+            if (kTotal <= 0.0) return NMain;
+
+            return aTotal * Math.Pow(rTotal, 2.0 / 3.0) / kTotal;
+        }
+
+        /// <summary>
+        /// 计算输水能力 K：
+        /// 简单断面使用全断面公式；复式断面使用 Lotter 组合输水能力。
+        /// </summary>
         public override double Conveyance(double hw)
         {
-            var (A, P, R, T) = Properties(hw);
-            if (A <= 0) return 0;
-            return Hydraulics.Conveyance(A, NMain, R);
+            if (!_isCompound)
+            {
+                var (A, P, R, T) = Properties(hw);
+                if (A <= 0) return 0;
+                return Hydraulics.Conveyance(A, NMain, R);
+            }
+
+            var (left, main, right) = GetSubsectionProps(hw);
+            double kLeft  = Hydraulics.Conveyance(left.A,  NLeft,  left.R);
+            double kMain  = Hydraulics.Conveyance(main.A,  NMain,  main.R);
+            double kRight = Hydraulics.Conveyance(right.A, NRight, right.R);
+            return Math.Pow(Math.Pow(kLeft, 1.5) + Math.Pow(kMain, 1.5) + Math.Pow(kRight, 1.5), 2.0 / 3.0);
         }
 
         /// <summary>计算 dK/dA，用于雅可比矩阵中的摩阻项展开。</summary>
@@ -277,42 +479,98 @@ namespace FlowSim.Models
         {
             var (A, P, R, T) = Properties(hw);
             if (A <= 0) return 0;
-            double dR_dA = DRadius_DA(hw);
-            return Hydraulics.DConveyance_DA(A, NMain, R, dR_dA);
+            double n    = GetEquivalentN(hw);
+            double dRdA = DRadius_DA(hw);
+            return Hydraulics.DConveyance_DA(A, n, R, dRdA);
         }
 
         /// <summary>
-        /// 计算水力半径对面积的导数 dR/dA = (P - A·dP/dA) / P²。
-        /// 推导：R = A/P，dR/dA = (P - A·dP/dA) / P²；
-        /// 梯形断面 dP/dA = dP/dh / (dA/dh) = [2·sqrt(1+m²)] / T。
+        /// 计算水力半径对面积的导数 dR/dA，使用解析公式：
+        /// dP/dh 根据断面类型（矩形/梯形/复式）推导，dR/dA = (P - A·dP/dA) / P²。
         /// </summary>
         public override double DRadius_DA(double hw)
         {
-            double h = hw - _zBed;
-            if (h <= 0) return 0;
+            double depth = hw - _zBed;
+            if (depth <= 0) return 0;
 
-            double T = _bMain + 2.0 * _mMain * h;
-            double A = (_bMain + _mMain * h) * h;
-            double P = _bMain + 2.0 * h * Math.Sqrt(1.0 + _mMain * _mMain);
-            double dP_dh = 2.0 * Math.Sqrt(1.0 + _mMain * _mMain);  // dP/dh
-            double dA_dh = T;                                          // dA/dh = T（水面宽）
-            double dP_dA = dP_dh / dA_dh;                             // 链式法则：dP/dA = (dP/dh)/(dA/dh)
-            return (P - A * dP_dA) / (P * P);                         // 商法则
+            var (A, P, R, T) = Properties(hw);
+            if (P <= 0 || T <= 0) return 0;
+
+            double dP_dh;
+            if (_isRect)
+                dP_dh = 2.0;
+            else if (!_isCompound)
+                dP_dh = 2.0 * Math.Sqrt(1.0 + _mMain * _mMain);
+            else
+                dP_dh = depth <= _bankfullDepth
+                    ? 2.0 * Math.Sqrt(1.0 + _mMain * _mMain)
+                    : 2.0 * Math.Sqrt(1.0 + _mFp   * _mFp);
+
+            double dP_dA = dP_dh / T;
+            return (P - A * dP_dA) / (P * P);
         }
 
         /// <summary>
         /// 计算面积对水深的导数 dA/dh = T（水面宽）。
-        /// 梯形断面：T = bMain + 2·mMain·h；当 h≤0 时取底宽 bMain。
+        /// h≤0 时返回底宽 bMain。
         /// </summary>
         public override double DArea_Dh(double hw)
         {
             double h = hw - _zBed;
-            if (h <= 0) return _bMain;                       // 干断面近似用底宽
-            return _bMain + 2.0 * _mMain * h;               // 水面宽
+            if (h <= 0) return _bMain;
+            return Properties(hw).T;
         }
 
-        /// <summary>梯形断面床底高程处处为 _zBed，与横坐标 x 无关。</summary>
-        public override double ZAt(double x) => _zBed;
+        /// <summary>
+        /// 查询横坐标 x 处的床底高程 z（m）。
+        /// 支持矩形、简单梯形和复式梯形三种情形。
+        /// </summary>
+        public override double ZAt(double x)
+        {
+            if (_isRect)
+                return (x > -_bMain / 2.0 && x < _bMain / 2.0) ? _zBed : double.PositiveInfinity;
+
+            if (!_isCompound)
+            {
+                // 简单梯形（此时 _mMain != 0）
+                if (x >= -_bMain / 2.0 && x <= _bMain / 2.0)
+                    return _zBed;
+                else if (x > _bMain / 2.0)
+                    return _zBed + (x - _bMain / 2.0) / _mMain;
+                else
+                    return _zBed + (-x - _bMain / 2.0) / _mMain;
+            }
+
+            // 复式梯形
+            if (x >= LeftFpLimit && x <= RightFpLimit)
+            {
+                // 主槽内
+                if (x >= -_bMain / 2.0 && x <= _bMain / 2.0)
+                    return _zBed;
+                else if (x > _bMain / 2.0)
+                    return _mMain > 0 ? _zBed + (x  - _bMain / 2.0) / _mMain : double.PositiveInfinity;
+                else
+                    return _mMain > 0 ? _zBed + (-x - _bMain / 2.0) / _mMain : double.PositiveInfinity;
+            }
+            else if (x < LeftFpLimit)
+            {
+                // 左侧滩区
+                double xLeftBedOuter = LeftFpLimit - _bFpLeft;
+                if (x >= xLeftBedOuter)
+                    return _zBank;
+                else
+                    return _mFp > 0 ? _zBank + (xLeftBedOuter - x) / _mFp : double.PositiveInfinity;
+            }
+            else
+            {
+                // 右侧滩区
+                double xRightBedOuter = RightFpLimit + _bFpRight;
+                if (x <= xRightBedOuter)
+                    return _zBank;
+                else
+                    return _mFp > 0 ? _zBank + (x - xRightBedOuter) / _mFp : double.PositiveInfinity;
+            }
+        }
     }
 
     /// <summary>
@@ -577,18 +835,18 @@ namespace FlowSim.Models
         }
 
         /// <summary>
-        /// 计算 dR/dA，使用数值差分估算 dP/dh，再通过链式法则求 dR/dA。
-        /// 数值差分步长 dh = 1e-4 m（足够小以保证精度，但不至于引起数值误差）。
+        /// 计算 dR/dA，使用中心差分（步长 dh=1e-6）：
+        /// dR/dA = (R(hw+dh) - R(hw-dh)) / (A(hw+dh) - A(hw-dh))。
         /// </summary>
         public override double DRadius_DA(double hw)
         {
-            var (A, P, R, T) = Properties(hw);
-            if (P <= 0 || T <= 0) return 0;
-            double dh = 1e-4;                           // 数值差分步长
-            double P2 = Properties(hw + dh).P;         // 水位微增后的湿周
-            double dP_dh = (P2 - P) / dh;              // 数值导数 dP/dh
-            double dP_dA = dP_dh / T;                  // 链式法则：dP/dA = (dP/dh)/(dA/dh) = dP/dh / T
-            return (P - A * dP_dA) / (P * P);          // dR/dA = (P - A·dP/dA) / P²
+            double dh = 1e-6;  // 中心差分步长（相比前向差分 1e-4 精度更高）
+            double a1 = Area(hw - dh);
+            double a2 = Area(hw + dh);
+            if (a2 - a1 == 0.0) return 0.0;
+            double r1 = HydraulicRadius(hw - dh);
+            double r2 = HydraulicRadius(hw + dh);
+            return (r2 - r1) / (a2 - a1);
         }
 
         /// <summary>dA/dh = T（水面宽），即面积对水深的导数等于水面宽。</summary>
@@ -601,6 +859,129 @@ namespace FlowSim.Models
         public override double ZAt(double x)
         {
             return Hydraulics.Interp(x, X, Z);
+        }
+
+        /// <summary>
+        /// 识别断面中连续的湿润子槽（subchannel）。
+        /// 对每段湿润区域，用插值确定与水面的交叉点，返回各子槽的 (x, z) 折线数组。
+        /// </summary>
+        private (double[] x, double[] z)[] GetSubchannels(double hw)
+        {
+            bool[] wet = Z.Select(zi => zi < hw).ToArray();
+            var subchannels = new System.Collections.Generic.List<(double[], double[])>();
+            int i = 0, n = wet.Length;
+
+            while (i < n)
+            {
+                if (!wet[i]) { i++; continue; }
+
+                int start = i;
+                while (i < n && wet[i]) i++;
+                int end = i; // one past last wet index
+
+                if (end - start < 2) continue;
+
+                var xList = new System.Collections.Generic.List<double>();
+                var zList = new System.Collections.Generic.List<double>();
+
+                // 左侧与水面的交叉点（插值）
+                if (start > 0 && Z[start - 1] > hw)
+                {
+                    double t = (hw - Z[start - 1]) / (Z[start] - Z[start - 1]);
+                    xList.Add(X[start - 1] + t * (X[start] - X[start - 1]));
+                    zList.Add(hw);
+                }
+
+                for (int k = start; k < end; k++) { xList.Add(X[k]); zList.Add(Z[k]); }
+
+                // 右侧与水面的交叉点（插值）
+                if (end < n && Z[end - 1] < hw && Z[end] > hw)
+                {
+                    double t = (hw - Z[end - 1]) / (Z[end] - Z[end - 1]);
+                    xList.Add(X[end - 1] + t * (X[end] - X[end - 1]));
+                    zList.Add(hw);
+                }
+
+                subchannels.Add((xList.ToArray(), zList.ToArray()));
+            }
+
+            return subchannels.ToArray();
+        }
+
+        /// <summary>
+        /// 计算摩阻坡度 Sf，支持多子槽（Horton-Einstein 组合输水能力方法）。
+        /// 单子槽时回退至基类实现。
+        /// </summary>
+        public override double FrictionSlope(double h, double Q)
+        {
+            double hw = h + ZMin;
+            var subchs = GetSubchannels(hw);
+            if (subchs.Length <= 1)
+                return base.FrictionSlope(h, Q);
+
+            double kSum = 0.0;
+            var roughness = GetRoughnessPara();
+            foreach (var (xSeg, zSeg) in subchs)
+            {
+                var xs = new IrregularSection(xSeg, zSeg);
+                xs.SetRoughnessPara(roughness);
+                double kJ = xs.Conveyance(hw);
+                kSum += Math.Pow(kJ, 1.5);
+            }
+            double kTotal = Math.Pow(kSum, 2.0 / 3.0);
+            return Hydraulics.FrictionSlope(Q, kTotal);
+        }
+
+        /// <summary>
+        /// 计算 dSf/dA，支持多子槽（组合输水能力导数）。
+        /// 单子槽时回退至基类实现。
+        /// </summary>
+        public override double DFrictionSlope_DA(double h, double Q)
+        {
+            double hw = h + ZMin;
+            var subchs = GetSubchannels(hw);
+            if (subchs.Length <= 1)
+                return base.DFrictionSlope_DA(h, Q);
+
+            double kSum = 0.0, dkSum = 0.0;
+            var roughness = GetRoughnessPara();
+            foreach (var (xSeg, zSeg) in subchs)
+            {
+                var xs = new IrregularSection(xSeg, zSeg);
+                xs.SetRoughnessPara(roughness);
+                double kJ  = xs.Conveyance(hw);
+                double dkJ = xs.DConveyance_DA(hw);
+                kSum  += Math.Pow(kJ, 1.5);
+                dkSum += 1.5 * Math.Sqrt(Math.Max(kJ, 0.0)) * dkJ;
+            }
+
+            double kEq  = Math.Pow(kSum, 2.0 / 3.0);
+            double dkEq = kSum > 0 ? (2.0 / 3.0) * Math.Pow(kSum, -1.0 / 3.0) * dkSum : 0.0;
+            return Hydraulics.DFrictionSlope_DA(Q, kEq, dkEq);
+        }
+
+        /// <summary>
+        /// 计算 dSf/dQ，支持多子槽。
+        /// 单子槽时回退至基类实现。
+        /// </summary>
+        public override double DFrictionSlope_DQ(double h, double Q)
+        {
+            double hw = h + ZMin;
+            var subchs = GetSubchannels(hw);
+            if (subchs.Length <= 1)
+                return base.DFrictionSlope_DQ(h, Q);
+
+            double kSum = 0.0;
+            var roughness = GetRoughnessPara();
+            foreach (var (xSeg, zSeg) in subchs)
+            {
+                var xs = new IrregularSection(xSeg, zSeg);
+                xs.SetRoughnessPara(roughness);
+                double kJ = xs.Conveyance(hw);
+                kSum += Math.Pow(kJ, 1.5);
+            }
+            double kEq = Math.Pow(kSum, 2.0 / 3.0);
+            return Hydraulics.DFrictionSlope_DQ(Q, kEq);
         }
     }
 
@@ -617,54 +998,92 @@ namespace FlowSim.Models
     {
         /// <summary>
         /// 在两个断面 xs1 和 xs2 之间按距离插值，返回中间断面。
-        /// 仅支持同类型断面（梯形/不规则）的插值；类型不同时退回到返回 xs1。
+        /// <para>
+        /// 支持：同类型梯形、同类型不规则、以及混合类型（至少一方为不规则断面）的插值。
+        /// 权重规则：w1 = dist2/(dist1+dist2)，w2 = dist1/(dist1+dist2)。
+        /// </para>
         /// </summary>
-        /// <param name="xs1">左侧（上游）断面。</param>
-        /// <param name="xs2">右侧（下游）断面。</param>
-        /// <param name="dist1">插值点距 xs1 的距离（m）。</param>
-        /// <param name="dist2">插值点距 xs2 的距离（m）。</param>
-        /// <returns>插值生成的中间断面。</returns>
         public static CrossSection Interpolate(CrossSection xs1, CrossSection xs2, double dist1, double dist2)
         {
             double totalDist = dist1 + dist2;
-            if (totalDist <= 0) return xs1;   // 距离为零直接返回左侧断面
+            if (totalDist <= 1e-9) return xs1;  // 数值容差：距离极小时直接返回 xs1
+            if (dist1     <= 1e-9) return xs1;
+            if (dist2     <= 1e-9) return xs2;
 
-            // 权重：离哪个断面近，权重越大
-            double w1 = dist2 / totalDist;    // xs1 的权重（由 dist2 决定）
-            double w2 = dist1 / totalDist;    // xs2 的权重（由 dist1 决定）
+            double w1 = dist2 / totalDist;   // xs1 的权重（离 xs1 越近权重越大）
+            double w2 = dist1 / totalDist;   // xs2 的权重
 
+            // 插值共享（非几何）属性
+            double nL = xs1.NLeft  * w1 + xs2.NLeft  * w2;
+            double nM = xs1.NMain  * w1 + xs2.NMain  * w2;
+            double nR = xs1.NRight * w1 + xs2.NRight * w2;
+            double? bedSlope = (xs1.BedSlope.HasValue && xs2.BedSlope.HasValue)
+                ? (double?)(xs1.BedSlope.Value * w1 + xs2.BedSlope.Value * w2)
+                : (xs1.BedSlope ?? xs2.BedSlope);
+            double curvature = xs1.Curvature * w1 + xs2.Curvature * w2;
+
+            // ── Case 1: 两者均为梯形断面 ──────────────────────────────────────
             if (xs1 is TrapezoidalSection t1 && xs2 is TrapezoidalSection t2)
             {
-                // 梯形断面：对底宽 b、床底高程 z、糙率 n、坡度 S0 线性插值
-                double b = t1.Width * w1 + t2.Width * w2;
-                double z = t1.ZMin * w1 + t2.ZMin * w2;
-                double n = t1.NMain * w1 + t2.NMain * w2;
-                double S0 = (t1.BedSlope.HasValue && t2.BedSlope.HasValue)
-                    ? t1.BedSlope.Value * w1 + t2.BedSlope.Value * w2
-                    : (t1.BedSlope ?? t2.BedSlope) ?? 0;
-                return new TrapezoidalSection(b, 0, z, n, S0);
+                double zBed  = t1.ZMin  * w1 + t2.ZMin  * w2;
+                double bMain = t1.BMain * w1 + t2.BMain * w2;
+                double mMain = t1.MMain * w1 + t2.MMain * w2;
+
+                // 平滩水深（简单断面取 0）
+                double yBank1   = t1.IsCompound ? t1.ZBank - t1.ZMin : 0.0;
+                double yBank2   = t2.IsCompound ? t2.ZBank - t2.ZMin : 0.0;
+                double yBankNew = yBank1 * w1 + yBank2 * w2;
+                double? zBankNew = yBankNew > 1e-6 ? (double?)(zBed + yBankNew) : null;
+
+                double bFpL = t1.BFpLeft  * w1 + t2.BFpLeft  * w2;
+                double bFpR = t1.BFpRight * w1 + t2.BFpRight * w2;
+                double mFp  = t1.MFp      * w1 + t2.MFp      * w2;
+
+                return new TrapezoidalSection(bMain, mMain, zBed, nM, bedSlope, curvature,
+                                              zBankNew, bFpL, bFpR, mFp, nL, nR);
             }
-            else if (xs1 is IrregularSection ir1 && xs2 is IrregularSection ir2)
+
+            // ── Case 2: 两者均为不规则断面 ────────────────────────────────────
+            if (xs1 is IrregularSection ir1 && xs2 is IrregularSection ir2)
             {
-                // 不规则断面：保持 xs1 的横坐标，对各节点高程插值
-                double[] x = ir1.X;
-                double[] z = new double[x.Length];
-                for (int i = 0; i < x.Length; i++)
+                // 取两者 X 坐标的并集作为主控 X
+                var xMaster = ir1.X.Union(ir2.X).OrderBy(v => v).ToArray();
+                double[] zNew = new double[xMaster.Length];
+                for (int i = 0; i < xMaster.Length; i++)
                 {
-                    // 在 xs2 中插值得到对应横坐标 x[i] 处的高程
-                    double z2 = Hydraulics.Interp(x[i], ir2.X, ir2.Z);
-                    z[i] = ir1.Z[i] * w1 + z2 * w2;   // 加权插值
+                    double z1 = Hydraulics.Interp(xMaster[i], ir1.X, ir1.Z);
+                    double z2 = Hydraulics.Interp(xMaster[i], ir2.X, ir2.Z);
+                    zNew[i] = z1 * w1 + z2 * w2;
                 }
-                double n = ir1.NMain * w1 + ir2.NMain * w2;
-                double S0 = (ir1.BedSlope.HasValue && ir2.BedSlope.HasValue)
-                    ? ir1.BedSlope.Value * w1 + ir2.BedSlope.Value * w2
-                    : (ir1.BedSlope ?? ir2.BedSlope) ?? 0;
-                return new IrregularSection(x, z, n, S0);
+                var newCs = new IrregularSection(xMaster, zNew, nM, bedSlope, curvature);
+                newCs.SetRoughnessPara((nL, nM, nR,
+                                       xs1.LeftFpLimit  * w1 + xs2.LeftFpLimit  * w2,
+                                       xs1.RightFpLimit * w1 + xs2.RightFpLimit * w2));
+                return newCs;
             }
-            else
+
+            // ── Case 3: 混合类型（至少一方为不规则断面）────────────────────────
             {
-                // 类型不一致，退回到左侧断面
-                return xs1;
+                double[] xMaster;
+                if      (xs1 is IrregularSection irA) xMaster = irA.X;
+                else if (xs2 is IrregularSection irB) xMaster = irB.X;
+                else return xs1; // 不应到达此分支
+
+                double[] zNew = new double[xMaster.Length];
+                for (int i = 0; i < xMaster.Length; i++)
+                {
+                    double z1 = xs1.ZAt(xMaster[i]);
+                    double z2 = xs2.ZAt(xMaster[i]);
+                    // 处理梯形断面边界外的无穷大（取 ZMin + 100 m 作为安全上限）
+                    if (double.IsInfinity(z1) || double.IsNaN(z1)) z1 = xs1.ZMin + 100.0;
+                    if (double.IsInfinity(z2) || double.IsNaN(z2)) z2 = xs2.ZMin + 100.0;
+                    zNew[i] = z1 * w1 + z2 * w2;
+                }
+                var newCs = new IrregularSection(xMaster, zNew, nM, bedSlope, curvature);
+                newCs.SetRoughnessPara((nL, nM, nR,
+                                       xs1.LeftFpLimit  * w1 + xs2.LeftFpLimit  * w2,
+                                       xs1.RightFpLimit * w1 + xs2.RightFpLimit * w2));
+                return newCs;
             }
         }
     }
