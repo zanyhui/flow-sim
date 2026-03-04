@@ -234,7 +234,10 @@ namespace FlowSim.Models
                 peakIn = Math.Max(peakIn, qIn);
                 peakOut = Math.Max(peakOut, qOut);
             }
-            sw.WriteLine($"Mass imbalance = {massImbalance:F2} m^3 = {massImbalance / TimeStep / sumQin * 100:F4}% of inflow.");
+            // massImbalance is total volume (m^3); total inflow volume = sumQin * TimeStep
+            double totalInflowVolume = sumQin * TimeStep;
+            double massImbPct = totalInflowVolume > 0 ? massImbalance / totalInflowVolume * 100 : 0;
+            sw.WriteLine($"Mass imbalance = {massImbalance:F2} m^3 = {massImbPct:F4}% of inflow.");
             sw.WriteLine($"Peak inflow = {peakIn:F2} m^3/s");
             sw.WriteLine($"Peak outflow = {peakOut:F2} m^3/s");
             if (peakIn > 0) sw.WriteLine($"Attenuation = {(peakIn - peakOut) / peakIn * 100:F2}%");

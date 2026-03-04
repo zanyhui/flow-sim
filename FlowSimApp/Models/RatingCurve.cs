@@ -49,6 +49,7 @@ namespace FlowSim.Models
         public double Stage(double discharge, double trialStage = double.NaN, double tol = 1e-2)
         {
             if (!Defined) throw new InvalidOperationException("Rating curve is undefined.");
+            // Start slightly above the stage-shift datum to avoid zero/negative evaluation
             if (double.IsNaN(trialStage)) trialStage = -StageShift * 1.05;
             double q = Discharge(trialStage);
             for (int i = 0; i < 100 && Math.Abs(q - discharge) > tol; i++)

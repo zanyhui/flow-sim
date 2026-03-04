@@ -147,7 +147,7 @@ namespace FlowSim.Models
                 double newA = NewArea(AreaAt(TimeLevel - 1, last - 1), ghostA, FlowAt(TimeLevel - 1, last - 1), ghostQ);
                 double t = TimeLevel * TimeStep;
                 double hGuess = AreaToDepth(last, newA);
-                double newQ = -Channel.DownstreamBoundary.ConditionResidual(hGuess, 0, t) + 0;
+                double newQ = -Channel.DownstreamBoundary.ConditionResidual(hGuess, 0, t);
                 Depth![TimeLevel, last] = hGuess;
                 Flow![TimeLevel, last] = newQ;
             }
