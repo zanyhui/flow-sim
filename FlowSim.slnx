@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/FlowSimApp/">
+    <Project Path="FlowSimApp/FlowSim.csproj" />
+  </Folder>
+</Solution>
