@@ -387,7 +387,7 @@ C# 文件：`Hydraulics.cs`（`public static class Hydraulics`）
 | `self.roughness` | `Roughness` | 统一糙率（可选） |
 | `self.width` | `Width` | 河道宽度（可选） |
 | `self.length` | `Length` | 河道总长度 |
-| `self.interpolation_method` | `InitMethod` | 初始条件计算方法 |
+| `self.interpolation_method` | `InitMethod`（类型为枚举 `InitializationMethod`） | 初始条件计算方法 |
 | `self.initial_conditions` | `InitialConditions` | 初始条件 [nNodes, 2]（h, Q） |
 | `self.conditions_initialized` | `ConditionsInitialized` | 是否已完成初始化 |
 | `self.xs_at_node` | `XsAtNode` | 各节点水力断面数组 |
@@ -577,4 +577,4 @@ C# 文件：`Hydraulics.cs`（`public static class Hydraulics`）
 | 枚举定义 | 字符串字面量 | `enum` 类型（编译期安全） |
 | 正则化选项 | 有（`regularization`、`eps`、`A_reg`、`Q_eff`） | 未迁移 |
 | 性能缓存 | 无 | CrossSection 基类缓存上一次 `Properties(hw)` 结果 |
-| 弯道曲率 | `utility.compute_curv()`（弧长参数化） | `Channel._calcCurvature()`（三点角度法）|
+| 弯道曲率 | `utility.compute_curv()`（弧长参数化法：将中心线离散为弧长参数 s，对 x(s)、y(s) 求二阶梯度，再用曲率公式 κ = \|x'y''−y'x''\| / (x'²+y'²)^(3/2) 计算；适用于密集坐标点，计算精度较高） | `Channel._calcCurvature()`（三点角度法：取相邻三断面坐标，计算两段方向向量的夹角 θ 及平均弧长 L，再用 κ = 2sin(θ/2)/L 估算；适用于断面稀疏分布的情形，计算轻量但在弯道急变处精度略低）|
