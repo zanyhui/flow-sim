@@ -426,7 +426,163 @@ namespace FlowSim
             gridSummary.Rows.Add("峰值出流（m³/s）", $"{peakOut:F2}");
             gridSummary.Rows.Add("洪峰削减率（%）",  $"{atten:F2}");
             gridSummary.Rows.Add("质量不平衡（%）",  $"{massImbPct:F4}");
+
+            // 初始化图表选项卡
+            UpdateChartsTab();
         }
+
+        /// <summary>
+        /// 仿真完成后初始化"图表"选项卡：设置滑块范围、填充节点下拉框并绘制初始图表。
+        /// </summary>
+        private void UpdateChartsTab()
+        {
+            if (_solver == null || !_solver.Solved) return;
+
+            int nk = _solver.TimeLevel + 1;
+            int nn = _solver.NumberOfNodes;
+            double[] chainages = _solver.Channel.ChAtNode!;
+
+            // 设置纵断面时间滑块范围
+            trkLongTime.Minimum = 0;
+            trkLongTime.Maximum = nk - 1;
+            trkLongTime.Value   = 0;
+            trkLongTime.TickFrequency = Math.Max(1, (nk - 1) / 20);
+            trkLongTime.Enabled = true;
+
+            // 设置横断面时间滑块范围
+            trkXsTime.Minimum = 0;
+            trkXsTime.Maximum = nk - 1;
+            trkXsTime.Value   = 0;
+            trkXsTime.TickFrequency = Math.Max(1, (nk - 1) / 20);
+            trkXsTime.Enabled = true;
+
+            // 填充节点下拉框（显示桩号 km）
+            cmbXsNode.Items.Clear();
+            for (int i = 0; i < nn; i++)
+                cmbXsNode.Items.Add($"节点 {i}（{chainages[i] / 1000.0:F1} km）");
+            cmbXsNode.Enabled = true;
+
+            // 防止 SelectedIndexChanged 在此期间触发重复绘制
+            cmbXsNode.SelectedIndexChanged -= cmbXsNode_SelectedIndexChanged;
+            cmbXsNode.SelectedIndex = nn / 2;   // 默认选中中间节点
+            cmbXsNode.SelectedIndexChanged += cmbXsNode_SelectedIndexChanged;
+
+            // 绘制初始图表
+            UpdateLongProfile();
+            UpdateXsChart();
+        }
+
+        /// <summary>
+        /// 根据纵断面时间滑块当前值，重绘纵断面水位-距离图。
+        /// X 轴：桩号（km）；Y 轴：绝对高程（m）；显示水面线和床底线。
+        /// </summary>
+        private void UpdateLongProfile()
+        {
+            if (_solver == null || !_solver.Solved) return;
+
+            int k  = trkLongTime.Value;
+            double tHrs = k * _solver.TimeStep / 3600.0;
+            lblLongTime.Text = $"{tHrs:F1} 小时";
+
+            int nn         = _solver.NumberOfNodes;
+            double[] dist  = _solver.Channel.ChAtNode!;
+            var distKm     = Array.ConvertAll(dist, d => d / 1000.0);
+            double[] wl    = new double[nn];
+            for (int i = 0; i < nn; i++) wl[i] = _solver.Level![k, i];
+
+            plotLongProfile.Plot.Clear();
+
+            // 绘制床底纵剖面（棕色填充区域）
+            var bedLine = plotLongProfile.Plot.AddScatter(distKm, _solver.BedProfile!, label: "床底");
+            bedLine.Color      = Color.SaddleBrown;
+            bedLine.MarkerSize = 0;
+            bedLine.LineWidth  = 1.5f;
+
+            // 绘制水面线（蓝色）
+            var wlLine = plotLongProfile.Plot.AddScatter(distKm, wl, label: "水面");
+            wlLine.Color      = Color.DodgerBlue;
+            wlLine.MarkerSize = 0;
+            wlLine.LineWidth  = 2;
+
+            plotLongProfile.Plot.XLabel("距离（km）");
+            plotLongProfile.Plot.YLabel("高程（m）");
+            plotLongProfile.Plot.Title($"纵断面水位（t = {tHrs:F1} h）");
+            plotLongProfile.Plot.Legend();
+            plotLongProfile.Refresh();
+        }
+
+        /// <summary>
+        /// 根据横断面节点下拉框和时间滑块当前值，重绘横断面形状及水位图。
+        /// X 轴：断面横坐标（m）；Y 轴：高程（m）；显示地形轮廓和水位线。
+        /// </summary>
+        private void UpdateXsChart()
+        {
+            if (_solver == null || !_solver.Solved) return;
+
+            int nodeIdx = cmbXsNode.SelectedIndex;
+            if (nodeIdx < 0) return;
+
+            int k       = trkXsTime.Value;
+            double tHrs = k * _solver.TimeStep / 3600.0;
+            lblXsTime.Text = $"{tHrs:F1} 小时";
+
+            var xs          = _solver.Channel.XsAtNode![nodeIdx];
+            double wl       = _solver.Level![k, nodeIdx];
+            double depth    = wl - xs.ZMin;
+            double maxDepth = Math.Max(depth + 1.0, 2.0);   // 水面以上留 1 m 余量
+
+            var (xPts, zPts) = xs.GetDisplayShape(maxDepth);
+
+            plotXsShape.Plot.Clear();
+
+            // 绘制地形轮廓多边形（棕色填充）
+            try
+            {
+                var terrain = plotXsShape.Plot.AddPolygon(xPts, zPts);
+                terrain.FillColor  = Color.FromArgb(200, Color.SandyBrown);
+                terrain.LineColor  = Color.SaddleBrown;
+                terrain.LineWidth  = 1.5f;
+            }
+            catch (Exception ex)
+            {
+                // AddPolygon 失败时（如 ScottPlot API 不支持），回退为折线绘制
+                Log($"地形多边形绘制失败（{ex.GetType().Name}），改用折线绘制。");
+                var terrainLine = plotXsShape.Plot.AddScatter(xPts, zPts);
+                terrainLine.Color      = Color.SaddleBrown;
+                terrainLine.MarkerSize = 0;
+                terrainLine.LineWidth  = 2;
+            }
+
+            // 绘制水位线（蓝色）
+            if (depth > 0)
+            {
+                double xLeft  = xPts[0];
+                double xRight = xPts[xPts.Length - 1];
+                var wlLine = plotXsShape.Plot.AddScatter(
+                    new[] { xLeft, xRight },
+                    new[] { wl, wl },
+                    label: $"水位 {wl:F2} m");
+                wlLine.Color      = Color.DodgerBlue;
+                wlLine.MarkerSize = 0;
+                wlLine.LineWidth  = 2.5f;
+            }
+
+            double chainage = _solver.Channel.ChAtNode![nodeIdx];
+            plotXsShape.Plot.XLabel("断面横坐标（m）");
+            plotXsShape.Plot.YLabel("高程（m）");
+            plotXsShape.Plot.Title($"断面形状（桩号 {chainage / 1000.0:F1} km，t = {tHrs:F1} h，水深 {Math.Max(depth, 0):F2} m）");
+            plotXsShape.Plot.Legend();
+            plotXsShape.Refresh();
+        }
+
+        /// <summary>纵断面时间滑块滚动事件：重绘纵断面图。</summary>
+        private void trkLongTime_Scroll(object? sender, EventArgs e) => UpdateLongProfile();
+
+        /// <summary>横断面时间滑块滚动事件：重绘横断面图。</summary>
+        private void trkXsTime_Scroll(object? sender, EventArgs e) => UpdateXsChart();
+
+        /// <summary>横断面节点下拉框切换事件：重绘横断面图。</summary>
+        private void cmbXsNode_SelectedIndexChanged(object? sender, EventArgs e) => UpdateXsChart();
 
         /// <summary>
         /// 在日志文本框追加一行消息。

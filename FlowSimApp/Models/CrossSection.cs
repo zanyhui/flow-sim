@@ -86,6 +86,18 @@ namespace FlowSim.Models
         /// <summary>查询横坐标 x 处的床底高程 z（m），用于不规则断面插值。</summary>
         public abstract double ZAt(double x);
 
+        /// <summary>
+        /// 返回断面地形轮廓点（横坐标、高程），用于 UI 中可视化断面形状。
+        /// <para>
+        /// 返回的点集从左侧高点开始，沿断面地形向右延伸至右侧高点，
+        /// 形成开口朝上的"U"形轮廓，可直接用于绘制填充多边形（地形填充）。
+        /// 顶端高程为 <see cref="ZMin"/> + <paramref name="maxDepth"/>。
+        /// </para>
+        /// </summary>
+        /// <param name="maxDepth">显示的最大水深（m），控制轮廓顶端高程。</param>
+        /// <returns>轮廓横坐标数组和高程数组（等长）。</returns>
+        public abstract (double[] xPts, double[] zPts) GetDisplayShape(double maxDepth = 10.0);
+
         // 以下为通过 Properties() 派生的便捷属性
         /// <summary>过水面积 A（m²）。</summary>
         public double Area(double hw) => Properties(hw).A;
@@ -571,6 +583,53 @@ namespace FlowSim.Models
                     return _mFp > 0 ? _zBank + (x - xRightBedOuter) / _mFp : double.PositiveInfinity;
             }
         }
+
+        /// <summary>
+        /// 返回梯形/矩形断面的地形轮廓点，用于 UI 可视化。
+        /// <para>
+        /// 返回从左侧顶点沿断面轮廓到右侧顶点的折线，顶端高程为 ZMin + maxDepth。
+        /// 简单矩形：4 点；简单梯形：4 点；复式梯形：8 点。
+        /// </para>
+        /// </summary>
+        public override (double[] xPts, double[] zPts) GetDisplayShape(double maxDepth = 10.0)
+        {
+            double topZ = _zBed + Math.Max(maxDepth, 1.0);
+            var xs = new System.Collections.Generic.List<double>();
+            var zs = new System.Collections.Generic.List<double>();
+
+            if (_isRect)
+            {
+                // 矩形：左侧垂直边 + 水平底 + 右侧垂直边
+                xs.AddRange(new[] { -_bMain / 2, -_bMain / 2, _bMain / 2, _bMain / 2 });
+                zs.AddRange(new[] { topZ, _zBed, _zBed, topZ });
+            }
+            else if (!_isCompound)
+            {
+                // 简单梯形：左斜边 + 水平底 + 右斜边
+                double leftX  = -_bMain / 2 - _mMain * Math.Max(maxDepth, 1.0);
+                double rightX =  _bMain / 2 + _mMain * Math.Max(maxDepth, 1.0);
+                xs.AddRange(new[] { leftX,  -_bMain / 2, _bMain / 2, rightX });
+                zs.AddRange(new[] { topZ,   _zBed,       _zBed,      topZ   });
+            }
+            else
+            {
+                // 复式梯形：左侧滩区 → 左坡 → 主槽底 → 右坡 → 右侧滩区
+                double fpDepth   = Math.Max(maxDepth - _bankfullDepth, 0.0);
+                double leftOuter  = LeftFpLimit  - _bFpLeft  - (_mFp > 0 ? _mFp * fpDepth : 0);
+                double rightOuter = RightFpLimit + _bFpRight + (_mFp > 0 ? _mFp * fpDepth : 0);
+
+                xs.Add(leftOuter);                    zs.Add(topZ);
+                xs.Add(LeftFpLimit - _bFpLeft);       zs.Add(_zBank);
+                xs.Add(LeftFpLimit);                  zs.Add(_zBank);
+                xs.Add(-_bMain / 2.0);                zs.Add(_zBed);
+                xs.Add( _bMain / 2.0);                zs.Add(_zBed);
+                xs.Add(RightFpLimit);                 zs.Add(_zBank);
+                xs.Add(RightFpLimit + _bFpRight);     zs.Add(_zBank);
+                xs.Add(rightOuter);                   zs.Add(topZ);
+            }
+
+            return (xs.ToArray(), zs.ToArray());
+        }
     }
 
     /// <summary>
@@ -859,6 +918,32 @@ namespace FlowSim.Models
         public override double ZAt(double x)
         {
             return Hydraulics.Interp(x, X, Z);
+        }
+
+        /// <summary>
+        /// 返回不规则断面的地形轮廓点，用于 UI 可视化。
+        /// <para>
+        /// 在原始 (X, Z) 折线的首尾各插入一个顶端点（高程 = ZMin + maxDepth），
+        /// 使返回的轮廓从左侧高点沿断面地形延伸至右侧高点，形成开口朝上的"U"形，
+        /// 可直接传入绘图接口作为填充多边形的顶点。
+        /// </para>
+        /// </summary>
+        public override (double[] xPts, double[] zPts) GetDisplayShape(double maxDepth = 10.0)
+        {
+            double topZ = _zMin + Math.Max(maxDepth, 1.0);
+            int n = X.Length;
+            var xs = new double[n + 2];
+            var zs = new double[n + 2];
+
+            // 首点：左侧边缘在顶端高程处
+            xs[0] = X[0];     zs[0] = topZ;
+            // 中间：原始断面折线点
+            Array.Copy(X, 0, xs, 1, n);
+            Array.Copy(Z, 0, zs, 1, n);
+            // 末点：右侧边缘在顶端高程处
+            xs[n + 1] = X[n - 1]; zs[n + 1] = topZ;
+
+            return (xs, zs);
         }
 
         /// <summary>

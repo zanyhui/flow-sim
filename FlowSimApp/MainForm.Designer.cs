@@ -48,6 +48,7 @@ namespace FlowSim
             this.tabBoundary = new TabPage("边界条件");
             this.tabSolver   = new TabPage("求解器设置");
             this.tabResults  = new TabPage("结果");
+            this.tabCharts   = new TabPage("图表");
 
             // ---- 河道设置选项卡控件 ----
             this.numLength      = new NumericUpDown();   // 河道长度（m）
@@ -89,6 +90,15 @@ namespace FlowSim
             this.plotProfile = new FormsPlot();          // 水面纵剖面图表
             this.gridSummary = new DataGridView();       // 统计汇总表格
 
+            // ---- 图表选项卡控件 ----
+            this.plotLongProfile = new FormsPlot();      // 纵断面水位-时间图
+            this.plotXsShape     = new FormsPlot();      // 横断面形状图
+            this.trkLongTime     = new TrackBar();       // 纵断面时间滑块
+            this.trkXsTime       = new TrackBar();       // 横断面时间滑块
+            this.lblLongTime     = new Label();          // 纵断面当前时间显示
+            this.lblXsTime       = new Label();          // 横断面当前时间显示
+            this.cmbXsNode       = new ComboBox();       // 断面节点选择下拉框
+
             // ---- 底部固定面板控件 ----
             this.btnRun  = new Button();                 // "运行仿真"按钮
             this.btnSave = new Button();                 // "保存结果"按钮
@@ -102,6 +112,7 @@ namespace FlowSim
             tabControl.TabPages.Add(tabBoundary);
             tabControl.TabPages.Add(tabSolver);
             tabControl.TabPages.Add(tabResults);
+            tabControl.TabPages.Add(tabCharts);
 
             // ===== 河道设置选项卡 =====
             // 使用 TableLayoutPanel 两列均分布局（标签列 + 输入控件列）
@@ -321,6 +332,103 @@ namespace FlowSim
 
             tabResults.Controls.Add(splitResults);
 
+            // ===== 图表选项卡 =====
+            // 上半：纵断面水位图（可拖动时间滑块）
+            // 下半：横断面形状图（可选节点 + 拖动时间滑块）
+            var splitCharts = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = System.Windows.Forms.Orientation.Horizontal,
+                SplitterDistance = 320   // 上下各约一半
+            };
+
+            // ── 纵断面区（上半）──
+            // 控制面板：标题 + 时间滑块 + 当前时间标签
+            var pnlLongCtrl = new Panel { Dock = DockStyle.Top, Height = 50, Padding = new System.Windows.Forms.Padding(5, 6, 5, 0) };
+
+            var lblLongTitle = new Label
+            {
+                Text      = "纵断面水深",
+                Location  = new System.Drawing.Point(5, 12),
+                AutoSize  = true,
+                Font      = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold)
+            };
+
+            var lblLongSlider = new Label { Text = "时间：", Location = new System.Drawing.Point(110, 14), AutoSize = true };
+
+            trkLongTime.Minimum       = 0;
+            trkLongTime.Maximum       = 100;
+            trkLongTime.Value         = 0;
+            trkLongTime.TickFrequency = 10;
+            trkLongTime.AutoSize      = false;
+            trkLongTime.Location      = new System.Drawing.Point(158, 4);
+            trkLongTime.Size          = new System.Drawing.Size(400, 42);
+            trkLongTime.Enabled       = false;
+            trkLongTime.Scroll       += trkLongTime_Scroll;
+
+            lblLongTime.Text     = "—";
+            lblLongTime.Location = new System.Drawing.Point(570, 14);
+            lblLongTime.AutoSize = true;
+
+            pnlLongCtrl.Controls.Add(lblLongTitle);
+            pnlLongCtrl.Controls.Add(lblLongSlider);
+            pnlLongCtrl.Controls.Add(trkLongTime);
+            pnlLongCtrl.Controls.Add(lblLongTime);
+
+            plotLongProfile.Dock = DockStyle.Fill;
+
+            splitCharts.Panel1.Controls.Add(plotLongProfile);   // Fill (底层先加)
+            splitCharts.Panel1.Controls.Add(pnlLongCtrl);       // Top (后加，置于顶部)
+
+            // ── 横断面区（下半）──
+            var pnlXsCtrl = new Panel { Dock = DockStyle.Top, Height = 50, Padding = new System.Windows.Forms.Padding(5, 6, 5, 0) };
+
+            var lblXsTitle = new Label
+            {
+                Text     = "断面形状",
+                Location = new System.Drawing.Point(5, 12),
+                AutoSize = true,
+                Font     = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold)
+            };
+
+            var lblXsNodeLabel = new Label { Text = "节点：", Location = new System.Drawing.Point(95, 14), AutoSize = true };
+
+            cmbXsNode.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbXsNode.Location      = new System.Drawing.Point(140, 10);
+            cmbXsNode.Size          = new System.Drawing.Size(180, 24);
+            cmbXsNode.Enabled       = false;
+            cmbXsNode.SelectedIndexChanged += cmbXsNode_SelectedIndexChanged;
+
+            var lblXsSlider = new Label { Text = "时间：", Location = new System.Drawing.Point(332, 14), AutoSize = true };
+
+            trkXsTime.Minimum       = 0;
+            trkXsTime.Maximum       = 100;
+            trkXsTime.Value         = 0;
+            trkXsTime.TickFrequency = 10;
+            trkXsTime.AutoSize      = false;
+            trkXsTime.Location      = new System.Drawing.Point(378, 4);
+            trkXsTime.Size          = new System.Drawing.Size(350, 42);
+            trkXsTime.Enabled       = false;
+            trkXsTime.Scroll       += trkXsTime_Scroll;
+
+            lblXsTime.Text     = "—";
+            lblXsTime.Location = new System.Drawing.Point(738, 14);
+            lblXsTime.AutoSize = true;
+
+            pnlXsCtrl.Controls.Add(lblXsTitle);
+            pnlXsCtrl.Controls.Add(lblXsNodeLabel);
+            pnlXsCtrl.Controls.Add(cmbXsNode);
+            pnlXsCtrl.Controls.Add(lblXsSlider);
+            pnlXsCtrl.Controls.Add(trkXsTime);
+            pnlXsCtrl.Controls.Add(lblXsTime);
+
+            plotXsShape.Dock = DockStyle.Fill;
+
+            splitCharts.Panel2.Controls.Add(plotXsShape);   // Fill
+            splitCharts.Panel2.Controls.Add(pnlXsCtrl);     // Top
+
+            tabCharts.Controls.Add(splitCharts);
+
             // ===== 底部固定面板（按钮 + 日志）=====
             // "运行仿真"按钮（蓝色主按钮）
             btnRun.Text      = "▶ 运行仿真";
@@ -387,7 +495,7 @@ namespace FlowSim
 
         // ---- 控件字段声明 ----
         private TabControl tabControl;
-        private TabPage tabChannel, tabBoundary, tabSolver, tabResults;
+        private TabPage tabChannel, tabBoundary, tabSolver, tabResults, tabCharts;
         private NumericUpDown numLength, numWidth, numRoughness, numInitialFlow;
         private NumericUpDown numUsBedLevel, numDsBedLevel;
         private ComboBox cmbUsBcType, cmbDsBcType;
@@ -407,6 +515,11 @@ namespace FlowSim
         private NumericUpDown numLsYMin, numLsYMax, numLsSurfaceArea;
         private NumericUpDown numLsRcA, numLsRcB, numLsRcShift;
         private ComboBox cmbLsRcType;
+        // 图表选项卡控件
+        private FormsPlot plotLongProfile, plotXsShape;
+        private TrackBar trkLongTime, trkXsTime;
+        private Label lblLongTime, lblXsTime;
+        private ComboBox cmbXsNode;
 
         #endregion
     }
