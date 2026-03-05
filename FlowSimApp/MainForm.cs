@@ -155,6 +155,10 @@ namespace FlowSim
                     }
                 };
 
+                // Lax-Friedrichs：注册 CFL 警告回调，将超限警告输出到日志
+                if (solver is LaxSolver lax)
+                    lax.CflWarningCallback = msg => Log(msg);
+
                 Log($"正在运行仿真（{totalSteps} 步）...");
                 // 在后台线程运行仿真，保持 UI 响应
                 Task.Run(() =>
@@ -391,8 +395,15 @@ namespace FlowSim
             else
             {
                 // Preissmann 隐式格式（θ 决定数值耗散与精度的平衡）
-                double theta = (double)numTheta.Value;
-                solver = new PreissmannSolver(channel, theta, timeStep, spatialStep, simTime);
+                double theta     = (double)numTheta.Value;
+                double tolerance = (double)numTolerance.Value;
+                int    maxIter   = (int)numMaxIter.Value;
+                var ps = new PreissmannSolver(channel, theta, timeStep, spatialStep, simTime)
+                {
+                    Tolerance     = tolerance,
+                    MaxIterations = maxIter
+                };
+                solver = ps;
             }
             return solver;
         }
@@ -524,6 +535,27 @@ namespace FlowSim
             gridSummary.Rows.Add("峰值出流（m³/s）", $"{peakOut:F2}");
             gridSummary.Rows.Add("洪峰削减率（%）",  $"{atten:F2}");
             gridSummary.Rows.Add("质量不平衡（%）",  $"{massImbPct:F4}");
+
+            // 填充 CFL 条件查看表格（仅 Lax-Friedrichs 格式有效）
+            gridCfl.Rows.Clear();
+            if (_solver is LaxSolver laxSolver && laxSolver.MaxCflPerStep != null)
+            {
+                double maxCflAll = 0;
+                for (int k = 1; k < nk; k++)
+                {
+                    double cfl = laxSolver.MaxCflPerStep[k];
+                    maxCflAll = Math.Max(maxCflAll, cfl);
+                    gridCfl.Rows.Add(k, $"{k * dt / 3600.0:F3}", $"{cfl:F4}");
+                    // 超过 1.0 的行高亮显示
+                    if (cfl > 1.0)
+                        gridCfl.Rows[gridCfl.Rows.Count - 1].DefaultCellStyle.BackColor = Color.LightSalmon;
+                }
+                gridSummary.Rows.Add("最大 CFL 数",   $"{maxCflAll:F4}");
+            }
+            else
+            {
+                gridCfl.Rows.Add("—", "—", "（仅 Lax-Friedrichs 格式显示 CFL）");
+            }
 
             // 初始化图表选项卡
             UpdateChartsTab();

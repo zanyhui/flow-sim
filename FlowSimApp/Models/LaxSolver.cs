@@ -48,6 +48,25 @@ namespace FlowSim.Models
         public LaxSecondaryBC DownstreamSecondaryBC { get; }
 
         /// <summary>
+        /// CFL 警告阈值：CFL 超过此值时抛出异常，介于 1.0 和此值之间时仅发出警告。
+        /// 默认值 1.05（允许 5% 以内的 CFL 超限，以容忍微小数值误差）。
+        /// </summary>
+        public double CflWarningThreshold { get; set; } = 1.05;
+
+        /// <summary>
+        /// 每个时步的最大 CFL 数数组 [时间层]（仿真完成后可读取）。
+        /// 仅记录已完成的时间层（索引从 1 开始，0 层为初始条件无 CFL 意义）。
+        /// </summary>
+        public double[]? MaxCflPerStep { get; private set; }
+
+        /// <summary>
+        /// CFL 超限警告回调（可选）。
+        /// 当某步 CFL 在 1 到 <see cref="CflWarningThreshold"/> 之间时触发，
+        /// 参数为警告消息字符串。
+        /// </summary>
+        public Action<string>? CflWarningCallback { get; set; }
+
+        /// <summary>
         /// 构造 Lax-Friedrichs 求解器。
         /// </summary>
         /// <param name="channel">河道对象。</param>
@@ -83,6 +102,9 @@ namespace FlowSim.Models
             var swTotal = Stopwatch.StartNew();
             var swStep  = new Stopwatch();
 
+            // 分配每步最大 CFL 记录数组（与时间层数等长）
+            MaxCflPerStep = new double[NumberOfTimeLevels];
+
             while (running)
             {
                 swStep.Restart();
@@ -100,8 +122,9 @@ namespace FlowSim.Models
                 for (int i = 0; i < NumberOfNodes; i++)
                     ComputeNode(i);
 
-                // 检验 CFL 稳定性条件
-                CheckCflAll();
+                // 检验 CFL 稳定性条件（记录最大 CFL，超限时警告或抛异常）
+                double maxCfl = CheckCflAll();
+                MaxCflPerStep[TimeLevel] = maxCfl;
 
                 // 进度回调：通知 UI 当前步进度和耗时
                 swStep.Stop();
@@ -369,31 +392,51 @@ namespace FlowSim.Models
 
         /// <summary>
         /// 检验所有节点的 CFL 稳定性条件：|V ± c| ≤ Δx/Δt。
-        /// 若任意节点的物理波速超过数值波速 NumCelerity，则仿真不稳定，抛出异常。
         /// <para>
         /// CFL 数 = max(|V+c|, |V-c|) / (Δx/Δt)，应满足 CFL ≤ 1。
         /// 其中 c = sqrt(g·D) 为浅水波速，V 为断面平均流速。
         /// </para>
+        /// <list type="bullet">
+        ///   <item>CFL ∈ (1, <see cref="CflWarningThreshold"/>]：调用 <see cref="CflWarningCallback"/> 发出警告，继续计算。</item>
+        ///   <item>CFL > <see cref="CflWarningThreshold"/>：抛出 <see cref="InvalidOperationException"/>。</item>
+        /// </list>
         /// </summary>
-        private void CheckCflAll()
+        /// <returns>本时步所有节点中最大的 CFL 数。</returns>
+        private double CheckCflAll()
         {
+            double stepMaxCfl = 0;
+            int maxNode = 0;
+
             for (int i = 0; i < NumberOfNodes; i++)
             {
                 double A = AreaAt(TimeLevel, i);
                 double Q = FlowAt(TimeLevel, i);
                 if (A < 1e-10) continue;   // 干节点跳过
 
-                double V = Q / A;                                             // 断面平均流速
+                double V = Q / A;
                 double T = Channel.TopWidth(i, WaterLevelAt(TimeLevel, i));
-                double D = T > 1e-10 ? A / T : 0;                            // 水力深度
-                double c = Math.Sqrt(Hydraulics.G * Math.Max(D, 0));         // 浅水波速
+                double D = T > 1e-10 ? A / T : 0;
+                double c = Math.Sqrt(Hydraulics.G * Math.Max(D, 0));
 
-                // 顺逆流方向两个波速的最大绝对值
                 double maxCelerity = Math.Max(Math.Abs(V + c), Math.Abs(V - c));
-                if (maxCelerity > NumCelerity)
-                    throw new InvalidOperationException(
-                        $"CFL condition failed at i={i}, k={TimeLevel}. CFL={maxCelerity / NumCelerity:F3}");
+                double cfl = maxCelerity / NumCelerity;
+                if (cfl > stepMaxCfl) { stepMaxCfl = cfl; maxNode = i; }
             }
+
+            if (stepMaxCfl > CflWarningThreshold)
+                throw new InvalidOperationException(
+                    $"CFL condition failed at i={maxNode}, k={TimeLevel}. CFL={stepMaxCfl:F3}");
+
+            if (stepMaxCfl > 1.0)
+            {
+                string msg = $"[CFL 警告] 步骤 k={TimeLevel}, 节点 i={maxNode}: CFL={stepMaxCfl:F3} > 1（低于阈值 {CflWarningThreshold:F2}，继续计算）";
+                if (CflWarningCallback != null)
+                    CflWarningCallback(msg);
+                else
+                    Console.WriteLine(msg);   // 无回调时回退到控制台输出
+            }
+
+            return stepMaxCfl;
         }
     }
 }

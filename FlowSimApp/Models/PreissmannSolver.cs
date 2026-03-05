@@ -34,6 +34,12 @@ namespace FlowSim.Models
         /// <summary>Preissmann 隐式权重系数 θ（0.5～1.0；θ≥0.5 时无条件稳定）。</summary>
         public double Theta { get; }
 
+        /// <summary>牛顿迭代收敛容差（残差欧氏范数），默认 1e-4。</summary>
+        public double Tolerance { get; set; } = 1e-4;
+
+        /// <summary>牛顿迭代最大迭代次数，默认 100。</summary>
+        public int MaxIterations { get; set; } = 100;
+
         // 当前时间层的未知量向量 [h0, Q0, h1, Q1, ..., h_{N-1}, Q_{N-1}]
         private readonly double[] _unknowns;
 
@@ -88,8 +94,8 @@ namespace FlowSim.Models
         {
             bool running = true;
             int totalIterations = 0;
-            const double tolerance = 1e-4;   // 牛顿迭代收敛容差（残差欧氏范数）
-            const int maxIter = 100;         // 最大迭代次数
+            double tolerance = Tolerance;   // 牛顿迭代收敛容差（残差欧氏范数）
+            int maxIter = MaxIterations;    // 最大迭代次数
 
             var swTotal = Stopwatch.StartNew();   // 壁钟总计时器
             var swStep  = new Stopwatch();        // 单步计时器

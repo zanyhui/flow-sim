@@ -79,16 +79,19 @@ namespace FlowSim
             this.numLsRcShift      = new NumericUpDown();
 
             // ---- 求解器设置选项卡控件 ----
-            this.cmbSolverMethod = new ComboBox();       // 格式选择（Preissmann/Lax）
-            this.numTimeStep     = new NumericUpDown();  // 时间步长（s）
-            this.numSpatialStep  = new NumericUpDown();  // 空间步长（m）
-            this.numSimTime      = new NumericUpDown();  // 模拟时长（小时）
-            this.numTheta        = new NumericUpDown();  // Preissmann θ 参数
+            this.cmbSolverMethod  = new ComboBox();       // 格式选择（Preissmann/Lax）
+            this.numTimeStep      = new NumericUpDown();  // 时间步长（s）
+            this.numSpatialStep   = new NumericUpDown();  // 空间步长（m）
+            this.numSimTime       = new NumericUpDown();  // 模拟时长（小时）
+            this.numTheta         = new NumericUpDown();  // Preissmann θ 参数
+            this.numTolerance     = new NumericUpDown();  // 牛顿迭代收敛容差
+            this.numMaxIter       = new NumericUpDown();  // 牛顿迭代最大次数
 
             // ---- 结果选项卡控件 ----
             this.plotFlow    = new FormsPlot();          // 流量过程线图表
             this.plotProfile = new FormsPlot();          // 水面纵剖面图表
             this.gridSummary = new DataGridView();       // 统计汇总表格
+            this.gridCfl     = new DataGridView();       // CFL 条件查看表格
 
             // ---- 图表选项卡控件 ----
             this.plotLongProfile = new FormsPlot();      // 纵断面水位-时间图
@@ -275,29 +278,45 @@ namespace FlowSim
             pnlSolver.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             pnlSolver.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
 
-            // 格式选择下拉框；选 Lax 时禁用 θ 参数（仅 Preissmann 使用）
+            // 格式选择下拉框；选 Lax 时禁用 θ/tolerance/maxIter 参数（仅 Preissmann 使用）
             cmbSolverMethod.Items.AddRange(new[] { "Preissmann", "Lax-Friedrichs" });
             cmbSolverMethod.SelectedIndex = 0;
             cmbSolverMethod.DropDownStyle = ComboBoxStyle.DropDownList;
-            cmbSolverMethod.SelectedIndexChanged += (s, e) => numTheta.Enabled = cmbSolverMethod.SelectedIndex == 0;
+            cmbSolverMethod.SelectedIndexChanged += (s, e) =>
+            {
+                bool isPreissmann = cmbSolverMethod.SelectedIndex == 0;
+                numTheta.Enabled     = isPreissmann;
+                numTolerance.Enabled = isPreissmann;
+                numMaxIter.Enabled   = isPreissmann;
+            };
 
-            ConfigNum(numTimeStep,    60,    1,     3600,  0,    60);      // 时间步长默认 60 s
-            ConfigNum(numSpatialStep, 500,   10,    10000, 0,    500);     // 空间步长默认 500 m
-            ConfigNum(numSimTime,     24,    1,     720,   0,    24);      // 模拟时长默认 24 h
-            ConfigNum(numTheta,       0.6m,  0.5m,  1.0m,  2,    0.6m);   // θ 默认 0.6（适度隐式）
+            ConfigNum(numTimeStep,    60,    1,       3600,   0,    60);      // 时间步长默认 60 s
+            ConfigNum(numSpatialStep, 500,   10,      10000,  0,    500);     // 空间步长默认 500 m
+            ConfigNum(numSimTime,     24,    1,       720,    0,    24);      // 模拟时长默认 24 h
+            ConfigNum(numTheta,       0.6m,  0.5m,   1.0m,   2,    0.05m);   // θ 默认 0.6（步长 0.05，原值 0.6 过大）
+            // 收敛容差：科学计数形式用 decimal，精度 8 位小数，步长 0.0001
+            numTolerance.Minimum       = 1e-10m;
+            numTolerance.Maximum       = 1m;
+            numTolerance.DecimalPlaces = 8;
+            numTolerance.Increment     = 0.0001m;
+            numTolerance.Value         = 0.0001m;   // 默认 1e-4
+            numTolerance.Dock          = DockStyle.Fill;
+            ConfigNum(numMaxIter,     100,   1,       10000,  0,    10);      // 最大迭代默认 100
 
             AddRow(pnlSolver, "时间步长（s）：", numTimeStep);
             pnlSolver.Controls.Add(new Label { Text = "求解方法：", AutoSize = true });
             pnlSolver.Controls.Add(cmbSolverMethod);
-            AddRow(pnlSolver, "空间步长（m）：",        numSpatialStep);
-            AddRow(pnlSolver, "模拟时长（小时）：",     numSimTime);
-            AddRow(pnlSolver, "θ 参数（Preissmann）：", numTheta);
+            AddRow(pnlSolver, "空间步长（m）：",          numSpatialStep);
+            AddRow(pnlSolver, "模拟时长（小时）：",       numSimTime);
+            AddRow(pnlSolver, "θ 参数（Preissmann）：",   numTheta);
+            AddRow(pnlSolver, "收敛容差（Preissmann）：", numTolerance);
+            AddRow(pnlSolver, "最大迭代次数（Preissmann）：", numMaxIter);
 
             tabSolver.Controls.Add(pnlSolver);
 
             // ===== 结果选项卡 =====
             // 上半部分：左右两个图表（水平 SplitContainer）
-            // 下半部分：统计汇总表格
+            // 下半部分：选项卡（统计汇总 + CFL 条件查看）
             var splitResults = new SplitContainer
             {
                 Dock = DockStyle.Fill,
@@ -327,8 +346,30 @@ namespace FlowSim
             gridSummary.ReadOnly           = true;
             gridSummary.AutoSizeRowsMode   = DataGridViewAutoSizeRowsMode.AllCells;
 
+            // CFL 条件查看表格：仅 Lax 格式有效，显示每步最大 CFL
+            gridCfl.Dock           = DockStyle.Fill;
+            gridCfl.ColumnCount    = 3;
+            gridCfl.Columns[0].Name  = "时步";
+            gridCfl.Columns[1].Name  = "模拟时刻（h）";
+            gridCfl.Columns[2].Name  = "最大 CFL";
+            gridCfl.Columns[0].Width = 80;
+            gridCfl.Columns[1].Width = 120;
+            gridCfl.Columns[2].Width = 120;
+            gridCfl.AllowUserToAddRows = false;
+            gridCfl.ReadOnly           = true;
+            gridCfl.AutoSizeRowsMode   = DataGridViewAutoSizeRowsMode.AllCells;
+
+            // 用选项卡将两个表格放在下半区，方便切换
+            var tabBottom = new TabControl { Dock = DockStyle.Fill };
+            var tabSummary = new TabPage("统计汇总");
+            var tabCfl     = new TabPage("CFL 条件");
+            tabSummary.Controls.Add(gridSummary);
+            tabCfl.Controls.Add(gridCfl);
+            tabBottom.TabPages.Add(tabSummary);
+            tabBottom.TabPages.Add(tabCfl);
+
             splitResults.Panel1.Controls.Add(splitPlots);
-            splitResults.Panel2.Controls.Add(gridSummary);
+            splitResults.Panel2.Controls.Add(tabBottom);
 
             tabResults.Controls.Add(splitResults);
 
@@ -502,8 +543,10 @@ namespace FlowSim
         private NumericUpDown numPeakFlow, numRiseTime, numDsDepth;
         private ComboBox cmbSolverMethod;
         private NumericUpDown numTimeStep, numSpatialStep, numSimTime, numTheta;
+        private NumericUpDown numTolerance, numMaxIter;
         private FormsPlot plotFlow, plotProfile;
         private DataGridView gridSummary;
+        private DataGridView gridCfl;
         private Button btnRun, btnSave;
         private TextBox txtLog;
         // 不规则断面控件
