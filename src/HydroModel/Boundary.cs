@@ -171,7 +171,7 @@ namespace HydroModel
                         double n = CrossSection.GetEquivalentN(hw);
                         double dRdA = CrossSection.DHydraulicRadiusDArea(hw);
                         double area = CrossSection.Area(hw);
-                        double dHlDa = LumpedStorage.DEnergyLossDAera(area, flowRate, n, R, dRdA);
+                        double dHlDa = LumpedStorage.DEnergyLossDArea(area, flowRate, n, R, dRdA);
                         return 1.0 - dHlDa * dAdH;
                     }
                     return 1.0;

@@ -101,9 +101,9 @@ namespace HydroModel
             return K * V * V / (2.0 * Hydraulics.G);
         }
 
-        public double EmpiricalLoss(double flow, double aEnt)
+        public double EmpiricalLoss(double entryArea, double flow)
         {
-            double V = flow / aEnt;
+            double V = flow / entryArea;
             return KQ * V * V / (2.0 * Hydraulics.G);
         }
 
@@ -116,13 +116,13 @@ namespace HydroModel
                    + DEmpiricalLossDFlow(entryArea, flow);
         }
 
-        public double DEnergyLossDAera(double entryArea, double flow, double roughness,
+        public double DEnergyLossDArea(double entryArea, double flow, double roughness,
             double hydraulicRadius, double dRdA, double? aStr = null)
         {
             if (!CaptureLosses) return 0;
-            return DFrictionLossDAera(entryArea, flow, roughness, hydraulicRadius, dRdA)
-                   + DExpansionLossDAera(entryArea, flow, aStr)
-                   + DEmpiricalLossDAera(entryArea, flow);
+            return DFrictionLossDArea(entryArea, flow, roughness, hydraulicRadius, dRdA)
+                   + DExpansionLossDArea(entryArea, flow, aStr)
+                   + DEmpiricalLossDArea(entryArea, flow);
         }
 
         private double DFrictionLossDFlow(double aEnt, double flow, double roughness, double hydraulicRadius)
@@ -132,7 +132,7 @@ namespace HydroModel
             return dSfdQ * (ReservoirLength ?? 0);
         }
 
-        private double DFrictionLossDAera(double aEnt, double flow, double roughness,
+        private double DFrictionLossDArea(double aEnt, double flow, double roughness,
             double hydraulicRadius, double dRdA)
         {
             double dSfdA = Hydraulics.DFrictionSlopeDArea(flow, area: aEnt, roughness: roughness,
@@ -140,7 +140,7 @@ namespace HydroModel
             return dSfdA * (ReservoirLength ?? 0);
         }
 
-        private double DExpansionLossDAera(double aEnt, double flow, double? aStr = null)
+        private double DExpansionLossDArea(double aEnt, double flow, double? aStr = null)
         {
             if (aStr == null) return 0;
             double K = Math.Pow(1.0 - aEnt / aStr.Value, 2);
@@ -159,7 +159,7 @@ namespace HydroModel
             return K * 2.0 * V * dVdQ / (2.0 * Hydraulics.G);
         }
 
-        private double DEmpiricalLossDAera(double aEnt, double flow)
+        private double DEmpiricalLossDArea(double aEnt, double flow)
         {
             double V = flow / aEnt;
             double dVdA = -flow / (aEnt * aEnt);
