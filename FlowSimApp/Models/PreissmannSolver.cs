@@ -382,16 +382,19 @@ namespace FlowSim.Models
                 k1_i1: SeAt(TimeLevel, i + 1), k1_i: SeAt(TimeLevel, i),
                 k_i1: SeAt(TimeLevel - 1, i + 1), k_i: SeAt(TimeLevel - 1, i));
 
-            // 对流项 Q²/A 对 A 的偏导（注意 A 通过 h 变化，故需乘 dA/dh）
+            // 对流项 Q²/A 对 A_i 的偏导（∂/∂A_i），乘 dA_dh 转换为 ∂/∂h_i
             double d_dQ2Adx_dA = -SpatialDiff(k1_i: 1) * (Q / Math.Max(A, 1e-6)) * (Q / Math.Max(A, 1e-6));
-            // 重力项各分量对 A_i 的偏导
+            // 重力项各分量——注意 d_dYdx_dh 已是 ∂/∂h_i，其余为 ∂/∂A_i
             double d_avgA_dA   = CellAvg(k1_i: 1);          // ∂avg_A/∂A_i
-            double d_dYdx_dh   = SpatialDiff(k1_i: 1);      // ∂(dY_dx)/∂h_i（水位包含床底+水深）
+            double d_dYdx_dh   = SpatialDiff(k1_i: 1);      // ∂(dY_dx)/∂h_i（水位 = 床底 + 水深，∂Y/∂h = 1）
             double d_avgSe_dA  = CellAvg(k1_i: 1) * dSe_dA; // ∂avg_Se/∂A_i
 
-            return (d_dQ2Adx_dA + Hydraulics.G * (
+            // 正确的链式法则：对流项需乘 dA_dh；
+            // 重力项中 d_dYdx_dh 已是 ∂/∂h_i，不能再乘 dA_dh，
+            // 仅 d_avgSe_dA 和 d_avgA_dA 需要通过 dA_dh 转换
+            return d_dQ2Adx_dA * dA_dh + Hydraulics.G * (
                 avg_A * (d_dYdx_dh + d_avgSe_dA * dA_dh) +
-                d_avgA_dA * dA_dh * (dY_dx + avg_Se))) * dA_dh;
+                d_avgA_dA * dA_dh * (dY_dx + avg_Se));
         }
 
         /// <summary>动量残差对节点 i 流量的偏导 ∂R_m/∂Q_i。</summary>
@@ -430,12 +433,12 @@ namespace FlowSim.Models
 
             double d_dQ2Adx_dA = -SpatialDiff(k1_i1: 1) * (Q / Math.Max(A, 1e-6)) * (Q / Math.Max(A, 1e-6));
             double d_avgA_dA   = CellAvg(k1_i1: 1);
-            double d_dYdx_dh   = SpatialDiff(k1_i1: 1);
+            double d_dYdx_dh   = SpatialDiff(k1_i1: 1);   // 已是 ∂/∂h_{i+1}，不再乘 dA_dh
             double d_avgSe_dA  = CellAvg(k1_i1: 1) * dSe_dA;
 
-            return (d_dQ2Adx_dA + Hydraulics.G * (
+            return d_dQ2Adx_dA * dA_dh + Hydraulics.G * (
                 avg_A * (d_dYdx_dh + d_avgSe_dA * dA_dh) +
-                d_avgA_dA * dA_dh * (dY_dx + avg_Se))) * dA_dh;
+                d_avgA_dA * dA_dh * (dY_dx + avg_Se));
         }
 
         /// <summary>动量残差对节点 i+1 流量的偏导 ∂R_m/∂Q_{i+1}。</summary>
