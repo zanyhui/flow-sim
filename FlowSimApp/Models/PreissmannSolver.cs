@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using ClosedXML.Excel;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.LinearAlgebra.Double;
@@ -90,8 +91,12 @@ namespace FlowSim.Models
             const double tolerance = 1e-4;   // 牛顿迭代收敛容差（残差欧氏范数）
             const int maxIter = 100;         // 最大迭代次数
 
+            var swTotal = Stopwatch.StartNew();   // 壁钟总计时器
+            var swStep  = new Stopwatch();        // 单步计时器
+
             while (running)
             {
+                swStep.Restart();
                 TimeLevel++;   // 推进时间层计数器
                 if (TimeLevel >= NumberOfTimeLevels)
                 {
@@ -151,6 +156,12 @@ namespace FlowSim.Models
 
                 if (verbose == 2) Console.WriteLine($">> {iteration} iterations.");
                 totalIterations += iteration;
+
+                // 进度回调：通知 UI 当前步进度和耗时
+                swStep.Stop();
+                StepCallback?.Invoke(TimeLevel, NumberOfTimeLevels - 1,
+                                     swStep.Elapsed.TotalMilliseconds,
+                                     swTotal.Elapsed.TotalSeconds);
             }
 
             base.Finalize(verbose);

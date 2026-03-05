@@ -29,12 +29,90 @@ namespace FlowSim
         /// <summary>已加载的不规则断面高程数组（m）。</summary>
         private double[]? _xsZ;
 
+        /// <summary>图表鼠标悬停十字准线（每个 FormsPlot 各一个）。</summary>
+        private ScottPlot.Plottable.Crosshair? _chFlow, _chProfile, _chLong, _chXs;
+
         /// <summary>
-        /// 构造函数：调用 WinForms 生成的控件初始化代码。
+        /// 构造函数：调用 WinForms 生成的控件初始化代码，并为所有图表安装鼠标悬停十字准线。
         /// </summary>
         public MainForm()
         {
             InitializeComponent();
+            InitCrosshairs();
+        }
+
+        /// <summary>
+        /// 为四个图表控件各添加一个 ScottPlot 十字准线，并绑定鼠标事件。
+        /// 鼠标悬停时十字准线随光标移动，在坐标轴边缘显示当前 X/Y 数值标注；
+        /// 鼠标离开后隐藏十字准线。
+        /// </summary>
+        private void InitCrosshairs()
+        {
+            _chFlow    = AttachCrosshair(plotFlow,        () => _chFlow);
+            _chProfile = AttachCrosshair(plotProfile,     () => _chProfile);
+            _chLong    = AttachCrosshair(plotLongProfile, () => _chLong);
+            _chXs      = AttachCrosshair(plotXsShape,     () => _chXs);
+        }
+
+        /// <summary>
+        /// 向指定 <see cref="FormsPlot"/> 控件添加十字准线并绑定鼠标事件。
+        /// 鼠标移动时通过 <paramref name="getCh"/> 获取当前最新的十字准线实例，
+        /// 支持 <see cref="ReAddCrosshair"/> 后仍能正确更新坐标。
+        /// <para>
+        /// <paramref name="getCh"/> 返回可空类型：若字段尚未赋值（理论上不应发生），
+        /// 则事件处理器提前返回，避免 NullReferenceException。
+        /// </para>
+        /// </summary>
+        private static ScottPlot.Plottable.Crosshair AttachCrosshair(
+            FormsPlot fp,
+            Func<ScottPlot.Plottable.Crosshair?> getCh)
+        {
+            var ch = fp.Plot.AddCrosshair(0, 0);
+            ch.IsVisible                       = false;
+            ch.HorizontalLine.PositionLabel    = true;
+            ch.VerticalLine.PositionLabel      = true;
+            ch.LineWidth                       = 1;
+            ch.Color                           = Color.FromArgb(160, Color.DimGray);
+
+            fp.MouseMove  += (s, e) =>
+            {
+                var cur = getCh();
+                if (cur == null) return;   // 字段尚未赋值（构造期间不处理事件，此处仅作防御）
+                (double x, double y) = fp.Plot.GetCoordinate((float)e.X, (float)e.Y);
+                cur.X         = x;
+                cur.Y         = y;
+                cur.IsVisible = true;
+                fp.Refresh();
+            };
+            fp.MouseLeave += (s, e) =>
+            {
+                var cur = getCh();
+                if (cur == null) return;
+                cur.IsVisible = false;
+                fp.Refresh();
+            };
+
+            return ch;
+        }
+
+        /// <summary>
+        /// 在调用 <see cref="ScottPlot.Plot.Clear()"/> 后重新向图表中添加十字准线并更新对应字段。
+        /// </summary>
+        private ScottPlot.Plottable.Crosshair ReAddCrosshair(FormsPlot fp)
+        {
+            var ch = fp.Plot.AddCrosshair(0, 0);
+            ch.IsVisible                    = false;
+            ch.HorizontalLine.PositionLabel = true;
+            ch.VerticalLine.PositionLabel   = true;
+            ch.LineWidth                    = 1;
+            ch.Color                        = Color.FromArgb(160, Color.DimGray);
+
+            if      (fp == plotFlow)        _chFlow    = ch;
+            else if (fp == plotProfile)     _chProfile = ch;
+            else if (fp == plotLongProfile) _chLong    = ch;
+            else if (fp == plotXsShape)     _chXs      = ch;
+
+            return ch;
         }
 
         /// <summary>
@@ -59,17 +137,35 @@ namespace FlowSim
                 var solver = BuildSolver();   // 根据 UI 参数构造求解器
                 _solver = solver;
 
-                Log("正在运行仿真...");
+                // 计算进度日志频率：每 ~5% 输出一次（至少每步输出一次）
+                int totalSteps = solver.NumberOfTimeLevels - 1;
+                int logInterval = Math.Max(1, totalSteps / 20);
+
+                // 进度回调：在后台线程记录计算时长，通过 Invoke 更新日志
+                solver.StepCallback = (step, total, stepMs, totalSec) =>
+                {
+                    if (step % logInterval == 0 || step == total)
+                    {
+                        double pct     = total > 0 ? (double)step / total * 100.0 : 100.0;
+                        double simHrs  = step * solver.TimeStep / 3600.0;
+                        string msg     = $"[{pct,5:F1}%] 步骤 {step}/{total}，" +
+                                         $"模拟时刻 {simHrs:F1} h，" +
+                                         $"步时 {stepMs:F1} ms，累计 {totalSec:F2} s";
+                        Log(msg);
+                    }
+                };
+
+                Log($"正在运行仿真（{totalSteps} 步）...");
                 // 在后台线程运行仿真，保持 UI 响应
                 Task.Run(() =>
                 {
                     try
                     {
-                        _solver.Run(verbose: 1);
+                        _solver.Run(verbose: 0);   // verbose=0 避免 Console 输出过多
                         // 仿真完成后回到 UI 线程更新界面
                         Invoke(() =>
                         {
-                            Log("仿真成功完成。");
+                            Log($"仿真成功完成，模拟时长 {_solver.TotalSimDuration / 3600.0:F1} h。");
                             UpdateResults();
                             btnSave.Enabled = true;
                             btnRun.Enabled  = true;
@@ -352,6 +448,7 @@ namespace FlowSim
 
             // ---- 绘制上游/中部/下游流量过程线（Q-t 曲线）----
             plotFlow.Plot.Clear();
+            _chFlow = ReAddCrosshair(plotFlow);   // Plot.Clear() 移除了十字准线，需重新加入
             double[] times = new double[nk];
             for (int k = 0; k < nk; k++) times[k] = k * dt / 3600.0;  // 秒转小时
 
@@ -375,6 +472,7 @@ namespace FlowSim
 
             // ---- 绘制峰值时刻水面纵剖面（Z-x 曲线）----
             plotProfile.Plot.Clear();
+            _chProfile = ReAddCrosshair(plotProfile);
 
             // 查找上游峰值流量对应的时间层索引
             int peakTimeIndex = 0;
@@ -491,6 +589,7 @@ namespace FlowSim
             for (int i = 0; i < nn; i++) wl[i] = _solver.Level![k, i];
 
             plotLongProfile.Plot.Clear();
+            _chLong = ReAddCrosshair(plotLongProfile);   // 重新加入十字准线
 
             // 绘制床底纵剖面（棕色填充区域）
             var bedLine = plotLongProfile.Plot.AddScatter(distKm, _solver.BedProfile!, label: "床底");
@@ -534,6 +633,7 @@ namespace FlowSim
             var (xPts, zPts) = xs.GetDisplayShape(maxDepth);
 
             plotXsShape.Plot.Clear();
+            _chXs = ReAddCrosshair(plotXsShape);   // 重新加入十字准线
 
             // 绘制地形轮廓多边形（棕色填充）
             try

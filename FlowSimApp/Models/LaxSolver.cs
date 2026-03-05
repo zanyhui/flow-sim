@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 
 namespace FlowSim.Models
 {
@@ -79,8 +80,12 @@ namespace FlowSim.Models
         public override void Run(int verbose = 1)
         {
             bool running = true;
+            var swTotal = Stopwatch.StartNew();
+            var swStep  = new Stopwatch();
+
             while (running)
             {
+                swStep.Restart();
                 TimeLevel++;
                 if (TimeLevel >= NumberOfTimeLevels)
                 {
@@ -97,6 +102,12 @@ namespace FlowSim.Models
 
                 // 检验 CFL 稳定性条件
                 CheckCflAll();
+
+                // 进度回调：通知 UI 当前步进度和耗时
+                swStep.Stop();
+                StepCallback?.Invoke(TimeLevel, NumberOfTimeLevels - 1,
+                                     swStep.Elapsed.TotalMilliseconds,
+                                     swTotal.Elapsed.TotalSeconds);
             }
 
             base.Finalize(verbose);

@@ -77,6 +77,14 @@ namespace FlowSim.Models
         protected readonly bool _fitSpatialStep;
 
         /// <summary>
+        /// 每完成一个时间步后调用的进度回调（可选）。
+        /// <para>
+        /// 参数：(当前时步索引, 总时步数, 本步耗时毫秒, 累计壁钟时间秒)。
+        /// </para>
+        /// </summary>
+        public Action<int, int, double, double>? StepCallback { get; set; }
+
+        /// <summary>
         /// 构造求解器基类，初始化参数并为河道初始化条件。
         /// </summary>
         /// <param name="channel">河道对象。</param>
