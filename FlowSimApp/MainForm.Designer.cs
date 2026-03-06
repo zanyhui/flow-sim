@@ -42,7 +42,7 @@ namespace FlowSim
         {
             components = new System.ComponentModel.Container();
 
-            // 主选项卡控件及五个选项页
+            // 主选项卡控件及六个选项页
             this.tabControl  = new TabControl();
             this.tabChannel  = new TabPage("河道设置");
             this.tabBoundary = new TabPage("边界条件");
@@ -50,6 +50,7 @@ namespace FlowSim
             this.tabResults  = new TabPage("结果");
             this.tabCharts   = new TabPage("图表");
             this.tabData     = new TabPage("数据");
+            this.tabLayout   = new TabPage("平面图");
 
             // ---- 河道设置选项卡控件 ----
             this.numLength      = new NumericUpDown();   // 河道长度（m）
@@ -113,6 +114,9 @@ namespace FlowSim
             this.lblDataTime = new Label();              // 数据表当前时间显示
             this.gridData    = new DataGridView();       // 节点水动力数据表
 
+            // ---- 平面图选项卡控件 ----
+            this.plotChannelLayout = new FormsPlot();    // 河道平面布置图
+
             // ---- 底部固定面板控件 ----
             this.btnRun  = new Button();                 // "运行仿真"按钮
             this.btnSave = new Button();                 // "保存结果"按钮
@@ -128,6 +132,7 @@ namespace FlowSim
             tabControl.TabPages.Add(tabResults);
             tabControl.TabPages.Add(tabCharts);
             tabControl.TabPages.Add(tabData);
+            tabControl.TabPages.Add(tabLayout);
 
             // ===== 河道设置选项卡 =====
             // 使用 TableLayoutPanel 两列均分布局（标签列 + 输入控件列）
@@ -578,6 +583,11 @@ namespace FlowSim
             tabData.Controls.Add(gridData);     // Fill（先加）
             tabData.Controls.Add(pnlDataCtrl);  // Top（后加）
 
+            // ===== 平面图选项卡 =====
+            // 充满整个选项页，仅含一个 ScottPlot 图表控件
+            plotChannelLayout.Dock = DockStyle.Fill;
+            tabLayout.Controls.Add(plotChannelLayout);
+
             // ===== 底部固定面板（按钮 + 日志）=====
             // "运行仿真"按钮（蓝色主按钮）
             btnRun.Text      = "▶ 运行仿真";
@@ -644,7 +654,7 @@ namespace FlowSim
 
         // ---- 控件字段声明 ----
         private TabControl tabControl;
-        private TabPage tabChannel, tabBoundary, tabSolver, tabResults, tabCharts, tabData;
+        private TabPage tabChannel, tabBoundary, tabSolver, tabResults, tabCharts, tabData, tabLayout;
         private NumericUpDown numLength, numWidth, numRoughness, numInitialFlow;
         private NumericUpDown numUsBedLevel, numDsBedLevel;
         private ComboBox cmbUsBcType, cmbDsBcType;
@@ -680,6 +690,8 @@ namespace FlowSim
         private TrackBar trkDataTime;
         private Label lblDataTime;
         private DataGridView gridData;
+        // 平面图选项卡控件
+        private FormsPlot plotChannelLayout;   // 河道平面布置图
 
         #endregion
     }

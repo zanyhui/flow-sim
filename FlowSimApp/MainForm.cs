@@ -407,6 +407,9 @@ namespace FlowSim
             {
                 cmbXsPreview.Enabled = false;
             }
+
+            // 刷新河道平面布置图（若坐标数据可用则绘制）
+            DrawChannelLayout();
         }
 
         /// <summary>
@@ -448,6 +451,116 @@ namespace FlowSim
             plotXsPreview.Plot.Title($"断面 {name}{titleSuffix}");
             plotXsPreview.Plot.AxisAuto();
             plotXsPreview.Refresh();
+        }
+
+        /// <summary>
+        /// 绘制河道平面布置图（不规则断面模式且断面索引含 x,y 坐标时可用）。
+        /// <para>
+        /// 图中显示两类要素：
+        /// <list type="bullet">
+        ///   <item><description>蓝色折线：中心线，按桩号顺序连接各断面的平面坐标 (x, y)；</description></item>
+        ///   <item><description>棕色短线：各断面的垂向连线，以中心线切线方向的法向量确定方向，
+        ///       长度取对应断面测点数据的起点距范围（即实测断面宽度），未加载测点时取平均断面间距的 40%。</description></item>
+        /// </list>
+        /// 算法：在每个断面坐标点处，用中心差分（端点用单侧差分）计算局部切线，
+        /// 将切线旋转 90° 得到法向量，沿法向量两侧延伸 halfWidth 绘制断面线。
+        /// </para>
+        /// </summary>
+        private void DrawChannelLayout()
+        {
+            plotChannelLayout.Plot.Clear();
+
+            if (_xsIndex == null)
+            {
+                plotChannelLayout.Plot.Title("河道平面布置图（未加载断面索引文件）");
+                plotChannelLayout.Refresh();
+                return;
+            }
+
+            // 筛选含平面坐标的断面，按桩号升序
+            var coordSecs = new System.Collections.Generic.List<(string name, double chainage, double n, double x, double y)>();
+            foreach (var rec in _xsIndex)
+                if (rec.x.HasValue && rec.y.HasValue)
+                    coordSecs.Add((rec.name, rec.chainage, rec.n, rec.x.Value, rec.y.Value));
+
+            if (coordSecs.Count < 2)
+            {
+                plotChannelLayout.Plot.Title("河道平面布置图（需要 ≥ 2 个断面含坐标 x,y）");
+                plotChannelLayout.Refresh();
+                return;
+            }
+
+            int n = coordSecs.Count;
+            double[] clX = new double[n];
+            double[] clY = new double[n];
+            for (int i = 0; i < n; i++) { clX[i] = coordSecs[i].x; clY[i] = coordSecs[i].y; }
+
+            // ---- 绘制中心线（蓝色折线）----
+            var centerLine = plotChannelLayout.Plot.AddScatter(clX, clY, label: "中心线");
+            centerLine.Color      = Color.DodgerBlue;
+            centerLine.LineWidth  = 2;
+            centerLine.MarkerSize = 6;
+            centerLine.MarkerShape = ScottPlot.MarkerShape.filledCircle;
+
+            // ---- 计算备用半宽（平均断面间距 × 0.4）----
+            double totalLen = 0;
+            for (int i = 1; i < n; i++)
+                totalLen += Math.Sqrt(Math.Pow(clX[i] - clX[i - 1], 2) + Math.Pow(clY[i] - clY[i - 1], 2));
+            double defaultHalfWidth = totalLen / (n - 1) * 0.4;
+
+            // ---- 绘制各断面垂向连线（棕色短线）+ 断面名称文字 ----
+            bool firstLabel = true;
+            for (int i = 0; i < n; i++)
+            {
+                // 局部切线方向（中心差分；端点单侧差分）
+                double tx, ty;
+                if (i == 0)
+                { tx = clX[1] - clX[0]; ty = clY[1] - clY[0]; }
+                else if (i == n - 1)
+                { tx = clX[n - 1] - clX[n - 2]; ty = clY[n - 1] - clY[n - 2]; }
+                else
+                { tx = clX[i + 1] - clX[i - 1]; ty = clY[i + 1] - clY[i - 1]; }
+
+                double tLen = Math.Sqrt(tx * tx + ty * ty);
+                if (tLen < 1e-12) { tx = 1; ty = 0; } else { tx /= tLen; ty /= tLen; }
+
+                // 法向量（切线逆时针旋转 90°）
+                double normX = -ty, normY = tx;
+
+                // 断面半宽：优先从测点数据取实测断面宽度的一半
+                double halfWidth = defaultHalfWidth;
+                if (_xsMeasPts != null && _xsMeasPts.TryGetValue(coordSecs[i].name, out var pts))
+                {
+                    double measWidth = pts.x.Length > 1 ? pts.x.Max() - pts.x.Min() : 0;
+                    if (measWidth > 0) halfWidth = measWidth * 0.5;
+                }
+
+                // 断面线端点
+                double[] xsXArr = { clX[i] + halfWidth * normX, clX[i] - halfWidth * normX };
+                double[] xsYArr = { clY[i] + halfWidth * normY, clY[i] - halfWidth * normY };
+
+                string? lineLabel = firstLabel ? "断面线" : null;
+                firstLabel = false;
+                var xsLine = plotChannelLayout.Plot.AddScatter(xsXArr, xsYArr, label: lineLabel);
+                xsLine.Color     = Color.SaddleBrown;
+                xsLine.LineWidth = 1.5f;
+                xsLine.MarkerSize = 0;
+
+                // 断面名称标注（显示在左端点旁）
+                var txt = plotChannelLayout.Plot.AddText(
+                    coordSecs[i].name,
+                    clX[i] + halfWidth * normX * 1.15,
+                    clY[i] + halfWidth * normY * 1.15);
+                txt.FontSize = 8;
+                txt.Color    = Color.DimGray;
+            }
+
+            plotChannelLayout.Plot.XLabel("X（m）");
+            plotChannelLayout.Plot.YLabel("Y（m）");
+            plotChannelLayout.Plot.Title("河道平面布置图");
+            plotChannelLayout.Plot.Legend();
+            plotChannelLayout.Plot.AxisAuto();
+            plotChannelLayout.Refresh();
         }
 
         /// <summary>
