@@ -42,13 +42,14 @@ namespace FlowSim
         {
             components = new System.ComponentModel.Container();
 
-            // 主选项卡控件及四个选项页
+            // 主选项卡控件及五个选项页
             this.tabControl  = new TabControl();
             this.tabChannel  = new TabPage("河道设置");
             this.tabBoundary = new TabPage("边界条件");
             this.tabSolver   = new TabPage("求解器设置");
             this.tabResults  = new TabPage("结果");
             this.tabCharts   = new TabPage("图表");
+            this.tabData     = new TabPage("数据");
 
             // ---- 河道设置选项卡控件 ----
             this.numLength      = new NumericUpDown();   // 河道长度（m）
@@ -107,6 +108,11 @@ namespace FlowSim
             this.lblXsTime       = new Label();          // 横断面当前时间显示
             this.cmbXsNode       = new ComboBox();       // 断面节点选择下拉框
 
+            // ---- 数据选项卡控件 ----
+            this.trkDataTime = new TrackBar();           // 数据表时间滑块
+            this.lblDataTime = new Label();              // 数据表当前时间显示
+            this.gridData    = new DataGridView();       // 节点水动力数据表
+
             // ---- 底部固定面板控件 ----
             this.btnRun  = new Button();                 // "运行仿真"按钮
             this.btnSave = new Button();                 // "保存结果"按钮
@@ -121,6 +127,7 @@ namespace FlowSim
             tabControl.TabPages.Add(tabSolver);
             tabControl.TabPages.Add(tabResults);
             tabControl.TabPages.Add(tabCharts);
+            tabControl.TabPages.Add(tabData);
 
             // ===== 河道设置选项卡 =====
             // 使用 TableLayoutPanel 两列均分布局（标签列 + 输入控件列）
@@ -164,7 +171,13 @@ namespace FlowSim
             cmbXsType.SelectedIndexChanged += (s, e) =>
             {
                 bool isIrr = cmbXsType.SelectedIndex == 1;
+                // 不规则断面模式：启用 CSV 加载按钮，禁用梯形参数（由断面数据自动提供）
                 btnLoadXsPts.Enabled = btnLoadXsIdx.Enabled = isIrr;
+                numWidth.Enabled      = !isIrr;
+                numRoughness.Enabled  = !isIrr;
+                numUsBedLevel.Enabled = !isIrr;
+                numDsBedLevel.Enabled = !isIrr;
+                numLength.Enabled     = !isIrr;
             };
 
             // 断面_测点 CSV 加载行：按钮 + 文件名标签
@@ -506,6 +519,65 @@ namespace FlowSim
 
             tabCharts.Controls.Add(splitCharts);
 
+            // ===== 数据选项卡 =====
+            // 顶部控制面板：时间滑块 + 当前时刻标签
+            var pnlDataCtrl = new Panel { Dock = DockStyle.Top, Height = 46, Padding = new System.Windows.Forms.Padding(8, 8, 8, 0) };
+
+            var lblDataTitle = new Label
+            {
+                Text      = "节点水动力数据",
+                Location  = new System.Drawing.Point(8, 14),
+                AutoSize  = true,
+                Font      = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold)
+            };
+
+            var lblDataSlider = new Label { Text = "时间：", Location = new System.Drawing.Point(175, 16), AutoSize = true };
+
+            trkDataTime.Minimum       = 0;
+            trkDataTime.Maximum       = 100;
+            trkDataTime.Value         = 0;
+            trkDataTime.TickFrequency = 10;
+            trkDataTime.AutoSize      = false;
+            trkDataTime.Location      = new System.Drawing.Point(225, 6);
+            trkDataTime.Size          = new System.Drawing.Size(450, 38);
+            trkDataTime.Enabled       = false;
+            trkDataTime.Scroll       += trkDataTime_Scroll;
+
+            lblDataTime.Text     = "—";
+            lblDataTime.Location = new System.Drawing.Point(685, 16);
+            lblDataTime.AutoSize = true;
+
+            pnlDataCtrl.Controls.Add(lblDataTitle);
+            pnlDataCtrl.Controls.Add(lblDataSlider);
+            pnlDataCtrl.Controls.Add(trkDataTime);
+            pnlDataCtrl.Controls.Add(lblDataTime);
+
+            // 数据表格：只读，多列显示节点水动力状态
+            gridData.Dock               = DockStyle.Fill;
+            gridData.AllowUserToAddRows = false;
+            gridData.ReadOnly           = true;
+            gridData.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            gridData.SelectionMode      = DataGridViewSelectionMode.FullRowSelect;
+            gridData.RowHeadersVisible  = false;
+            gridData.ColumnCount        = 9;
+            gridData.Columns[0].Name    = "节点";
+            gridData.Columns[1].Name    = "桩号 (km)";
+            gridData.Columns[2].Name    = "流量 (m³/s)";
+            gridData.Columns[3].Name    = "水位 (m)";
+            gridData.Columns[4].Name    = "水深 (m)";
+            gridData.Columns[5].Name    = "过水面积 (m²)";
+            gridData.Columns[6].Name    = "水面宽 (m)";
+            gridData.Columns[7].Name    = "流速 (m/s)";
+            gridData.Columns[8].Name    = "Fr";
+            // 节点列较窄，其余列均匀
+            gridData.Columns[0].FillWeight = 50;
+            gridData.Columns[1].FillWeight = 80;
+            for (int col = 2; col < 9; col++) gridData.Columns[col].FillWeight = 100;
+            gridData.AlternatingRowsDefaultCellStyle.BackColor = System.Drawing.Color.AliceBlue;
+
+            tabData.Controls.Add(gridData);     // Fill（先加）
+            tabData.Controls.Add(pnlDataCtrl);  // Top（后加）
+
             // ===== 底部固定面板（按钮 + 日志）=====
             // "运行仿真"按钮（蓝色主按钮）
             btnRun.Text      = "▶ 运行仿真";
@@ -572,7 +644,7 @@ namespace FlowSim
 
         // ---- 控件字段声明 ----
         private TabControl tabControl;
-        private TabPage tabChannel, tabBoundary, tabSolver, tabResults, tabCharts;
+        private TabPage tabChannel, tabBoundary, tabSolver, tabResults, tabCharts, tabData;
         private NumericUpDown numLength, numWidth, numRoughness, numInitialFlow;
         private NumericUpDown numUsBedLevel, numDsBedLevel;
         private ComboBox cmbUsBcType, cmbDsBcType;
@@ -604,6 +676,10 @@ namespace FlowSim
         private TrackBar trkLongTime, trkXsTime;
         private Label lblLongTime, lblXsTime;
         private ComboBox cmbXsNode;
+        // 数据选项卡控件
+        private TrackBar trkDataTime;
+        private Label lblDataTime;
+        private DataGridView gridData;
 
         #endregion
     }

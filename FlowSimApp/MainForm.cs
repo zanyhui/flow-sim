@@ -27,8 +27,8 @@ namespace FlowSim
         /// <summary>断面_测点.csv 解析结果：断面名称 → (起点距[], 高程[]) 测点数组映射。</summary>
         private System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>? _xsMeasPts;
 
-        /// <summary>断面_索引.csv 解析结果：(断面名称, 起点里程, 糙率n, 备注) 列表，按起点里程升序排列。</summary>
-        private System.Collections.Generic.List<(string name, double chainage, double n, string remark)>? _xsIndex;
+        /// <summary>断面_索引.csv 解析结果：按起点里程升序排列。含可选平面坐标 (x, y)。</summary>
+        private System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)>? _xsIndex;
 
         /// <summary>图表鼠标悬停十字准线（每个 FormsPlot 各一个）。</summary>
         private ScottPlot.Plottable.Crosshair? _chFlow, _chProfile, _chLong, _chXs, _chXsPreview;
@@ -109,10 +109,11 @@ namespace FlowSim
             ch.LineWidth                    = 1;
             ch.Color                        = Color.FromArgb(160, Color.DimGray);
 
-            if      (fp == plotFlow)        _chFlow    = ch;
-            else if (fp == plotProfile)     _chProfile = ch;
-            else if (fp == plotLongProfile) _chLong    = ch;
-            else if (fp == plotXsShape)     _chXs      = ch;
+            if      (fp == plotFlow)        _chFlow      = ch;
+            else if (fp == plotProfile)     _chProfile   = ch;
+            else if (fp == plotLongProfile) _chLong      = ch;
+            else if (fp == plotXsShape)     _chXs        = ch;
+            else if (fp == plotXsPreview)   _chXsPreview = ch;
 
             return ch;
         }
@@ -297,21 +298,23 @@ namespace FlowSim
         /// <summary>
         /// 加载断面_索引 CSV 文件。
         /// <para>
-        /// 文件格式：首行为标题（断面名称,起点里程,曼宁系数n,备注），后续每行为一个断面索引记录。
-        /// 备注列可省略。解析成功后将数据存入 <see cref="_xsIndex"/>，并按起点里程升序排列。
+        /// 文件格式：首行为标题，后续每行为一个断面索引记录。<br/>
+        /// 基本格式（向后兼容）：断面名称,起点里程,曼宁系数n,备注<br/>
+        /// 扩展格式（含平面坐标）：断面名称,起点里程,曼宁系数n,坐标x,坐标y,备注<br/>
+        /// 判断规则：若第 4、5 列均可解析为浮点数，则视为坐标 x, y；否则第 4 列视为备注。
         /// </para>
         /// </summary>
         private void btnLoadXsIdx_Click(object sender, EventArgs e)
         {
             using var dlg = new OpenFileDialog
             {
-                Title  = "选择断面_索引 CSV 文件（断面名称, 起点里程, 曼宁系数n, 备注）",
+                Title  = "选择断面_索引 CSV 文件（断面名称, 起点里程, 曼宁系数n[, 坐标x, 坐标y], 备注）",
                 Filter = "CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*"
             };
             if (dlg.ShowDialog() != DialogResult.OK) return;
             try
             {
-                var idx = new System.Collections.Generic.List<(string name, double chainage, double n, string remark)>();
+                var idx = new System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)>();
                 bool skipHeader = true;
                 foreach (var line in System.IO.File.ReadAllLines(dlg.FileName))
                 {
@@ -331,8 +334,25 @@ namespace FlowSim
                             System.Globalization.CultureInfo.InvariantCulture, out double chainage)) continue;
                     if (!double.TryParse(parts[2].Trim(), System.Globalization.NumberStyles.Float,
                             System.Globalization.CultureInfo.InvariantCulture, out double n)) continue;
-                    string remark = parts.Length > 3 ? parts[3].Trim() : string.Empty;
-                    idx.Add((name, chainage, n, remark));
+
+                    // 自动检测扩展格式（含坐标 x, y）
+                    double? xCoord = null, yCoord = null;
+                    string remark;
+                    if (parts.Length >= 5 &&
+                        double.TryParse(parts[3].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out double px) &&
+                        double.TryParse(parts[4].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out double py))
+                    {
+                        xCoord = px; yCoord = py;
+                        remark = parts.Length > 5 ? parts[5].Trim() : string.Empty;
+                    }
+                    else
+                    {
+                        remark = parts.Length > 3 ? parts[3].Trim() : string.Empty;
+                    }
+
+                    idx.Add((name, chainage, n, xCoord, yCoord, remark));
                 }
 
                 if (idx.Count < 2)
@@ -342,8 +362,10 @@ namespace FlowSim
                 idx.Sort((a, b) => a.chainage.CompareTo(b.chainage));
                 _xsIndex = idx;
 
+                int coordCount = idx.Count(r => r.x.HasValue);
+                string coordInfo = coordCount > 0 ? $"，{coordCount} 个断面含平面坐标" : "";
                 lblXsIdxFile.Text = System.IO.Path.GetFileName(dlg.FileName);
-                Log($"已加载断面索引文件：{dlg.FileName}（{_xsIndex.Count} 条记录）");
+                Log($"已加载断面索引文件：{dlg.FileName}（{_xsIndex.Count} 条记录{coordInfo}）");
                 RefreshXsPreviewDropdown();
             }
             catch (Exception ex)
@@ -443,24 +465,49 @@ namespace FlowSim
         /// <para>
         /// 构造流程：
         /// 1. 读取河道几何参数（长度、宽度、糙率、床底高程等）；
+        ///    若选择不规则断面，则自动从索引/测点数据中推导长度和床底高程；
         /// 2. 根据上游边界类型（流量过程线 or 正常水深）构造上游边界；
         ///    若选择流量过程线，则调用 <see cref="BuildTriangularHydrograph"/> 构造三角形洪水过程；
         /// 3. 根据下游边界类型（正常水深 or 固定水深）构造下游边界；
         /// 4. 构造 <see cref="Channel"/> 对象（使用 GVFEquation 初始化方式）；
-        /// 5. 根据用户选择的格式（Preissmann or Lax-Friedrichs）构造求解器。
+        /// 5. 若选择不规则断面，用 CSV 断面建立多断面模型；若索引含 x,y 坐标则调用 SetCoords；
+        /// 6. 根据用户选择的格式（Preissmann or Lax-Friedrichs）构造求解器。
         /// </para>
         /// </summary>
         /// <returns>初始化完成的求解器实例（<see cref="PreissmannSolver"/> 或 <see cref="LaxSolver"/>）。</returns>
         private Solver BuildSolver()
         {
-            // 读取河道几何参数
-            double length      = (double)numLength.Value;
+            bool isIrregular = cmbXsType.SelectedIndex == 1;
+
+            // 读取公共参数（不规则模式时某些参数从数据中覆盖）
             double width       = (double)numWidth.Value;
             double roughness   = (double)numRoughness.Value;
             double initialFlow = (double)numInitialFlow.Value;
-            double usBedLevel  = (double)numUsBedLevel.Value;
-            double dsBedLevel  = (double)numDsBedLevel.Value;
             double dsDepth     = (double)numDsDepth.Value;
+
+            // ---- 从 UI 读取初始几何参数 ----
+            double length     = (double)numLength.Value;
+            double usBedLevel = (double)numUsBedLevel.Value;
+            double dsBedLevel = (double)numDsBedLevel.Value;
+
+            // ---- 不规则断面：从数据推导几何参数 ----
+            if (isIrregular)
+            {
+                if (_xsMeasPts == null || _xsIndex == null)
+                    throw new InvalidOperationException(
+                        "选择不规则断面时，须先加载断面_测点 CSV 和断面_索引 CSV 文件。");
+
+                // 河道总长度 = 索引中最末断面桩号
+                length = _xsIndex[_xsIndex.Count - 1].chainage;
+
+                // 床底高程：从首/末断面测点中取最低点
+                string firstName = _xsIndex[0].name;
+                string lastName  = _xsIndex[_xsIndex.Count - 1].name;
+                if (_xsMeasPts.TryGetValue(firstName, out var firstPts))
+                    usBedLevel = firstPts.z.Min();
+                if (_xsMeasPts.TryGetValue(lastName, out var lastPts))
+                    dsBedLevel = lastPts.z.Min();
+            }
 
             // 根据上游边界类型选择
             Hydrograph? usHydrograph = null;
@@ -502,9 +549,6 @@ namespace FlowSim
                 ? Math.Max((double)numLsYMin.Value - dsBedLevel, 0.1)
                 : dsDepth;
 
-            // 计算河床纵坡（由上下游床底高程差 / 河道长度）
-            double bedSlope = length > 0 ? (usBedLevel - dsBedLevel) / length : 1e-4;
-
             // 构造上下游边界对象（桩号分别为 0 和 length）
             var usBoundary = new Boundary(usBcType, 0, usBedLevel, null, null, usHydrograph);
             var dsBoundary = new Boundary(dsBcType, length, dsBedLevel, dsInitDepth);
@@ -514,24 +558,32 @@ namespace FlowSim
                                       InitializationMethod.GVFEquation);
 
             // 不规则断面：由断面_测点 + 断面_索引两个 CSV 文件构建多断面模型
-            if (cmbXsType.SelectedIndex == 1)
+            if (isIrregular)
             {
-                if (_xsMeasPts == null || _xsIndex == null)
-                    throw new InvalidOperationException(
-                        "选择不规则断面时，须先加载断面_测点 CSV 和断面_索引 CSV 文件。");
-
                 var chainageList = new System.Collections.Generic.List<double>();
                 var sectionList  = new System.Collections.Generic.List<CrossSection>();
 
-                foreach (var (name, chainage, n, _) in _xsIndex)
+                // 收集有效坐标点（用于弯道曲率计算）
+                var coordXs = new System.Collections.Generic.List<double>();
+                var coordYs = new System.Collections.Generic.List<double>();
+                var coordChs = new System.Collections.Generic.List<double>();
+
+                foreach (var rec in _xsIndex!)
                 {
-                    if (!_xsMeasPts.TryGetValue(name, out var pts))
+                    if (!_xsMeasPts!.TryGetValue(rec.name, out var pts))
                     {
-                        Log($"警告：断面索引中的断面「{name}」在测点文件中未找到，已跳过。");
+                        Log($"警告：断面索引中的断面「{rec.name}」在测点文件中未找到，已跳过。");
                         continue;
                     }
-                    chainageList.Add(chainage);
-                    sectionList.Add(new IrregularSection(pts.x, pts.z, n));
+                    chainageList.Add(rec.chainage);
+                    sectionList.Add(new IrregularSection(pts.x, pts.z, rec.n));
+
+                    if (rec.x.HasValue && rec.y.HasValue)
+                    {
+                        coordXs.Add(rec.x.Value);
+                        coordYs.Add(rec.y.Value);
+                        coordChs.Add(rec.chainage);
+                    }
                 }
 
                 if (chainageList.Count < 2)
@@ -539,6 +591,16 @@ namespace FlowSim
                         "有效的不规则断面数量不足（至少需要 2 个）。请检查断面名称是否匹配。");
 
                 channel.SetCrossSection(chainageList.ToArray(), sectionList.ToArray());
+
+                // 若索引含平面坐标，传入 Channel 以计算弯道曲率
+                if (coordChs.Count >= 2)
+                {
+                    int nc = coordChs.Count;
+                    double[,] coords = new double[nc, 2];
+                    for (int coordIdx = 0; coordIdx < nc; coordIdx++) { coords[coordIdx, 0] = coordXs[coordIdx]; coords[coordIdx, 1] = coordYs[coordIdx]; }
+                    channel.SetCoords(coords, coordChs.ToArray());
+                    Log($"已设置 {nc} 个断面的平面坐标，将计算弯道曲率。");
+                }
             }
 
             // 集总调蓄库：创建 LumpedStorage 并挂接到下游 FixedDepth 边界
@@ -691,7 +753,7 @@ namespace FlowSim
             plotProfile.Refresh();
 
             // ---- 计算统计汇总 ----
-            double peakIn = 0, peakOut = 0, sumQin = 0, massImbVol = 0;
+            double peakIn = 0, peakOut = 0, sumQin = 0, sumQout = 0, massImbVol = 0;
             for (int k = 0; k < nk; k++)
             {
                 double qIn  = _solver.Flow![k, 0];
@@ -699,23 +761,29 @@ namespace FlowSim
                 peakIn     = Math.Max(peakIn, qIn);
                 peakOut    = Math.Max(peakOut, qOut);
                 sumQin     += qIn;
+                sumQout    += qOut;
                 massImbVol += (qIn - qOut) * dt;  // 累计体积不平衡（m³）
             }
             double atten = peakIn > 0 ? (peakIn - peakOut) / peakIn * 100 : 0;
             // 质量不平衡百分比 = 体积不平衡 / 总入流体积 × 100%
-            double totalInflowVol = sumQin * dt;
+            double totalInflowVol  = sumQin * dt;
+            double totalOutflowVol = sumQout * dt;
             double massImbPct = totalInflowVol > 0 ? massImbVol / totalInflowVol * 100 : 0;
 
             // 填充统计汇总表格
             gridSummary.Rows.Clear();
-            gridSummary.Rows.Add("空间步长（m）",    $"{_solver.SpatialStep:F1}");
-            gridSummary.Rows.Add("时间步长（s）",    $"{_solver.TimeStep:F1}");
-            gridSummary.Rows.Add("节点数量",          _solver.NumberOfNodes);
-            gridSummary.Rows.Add("时间步数",          _solver.TimeLevel + 1);
-            gridSummary.Rows.Add("峰值入流（m³/s）", $"{peakIn:F2}");
-            gridSummary.Rows.Add("峰值出流（m³/s）", $"{peakOut:F2}");
-            gridSummary.Rows.Add("洪峰削减率（%）",  $"{atten:F2}");
-            gridSummary.Rows.Add("质量不平衡（%）",  $"{massImbPct:F4}");
+            gridSummary.Rows.Add("空间步长（m）",        $"{_solver.SpatialStep:F1}");
+            gridSummary.Rows.Add("时间步长（s）",        $"{_solver.TimeStep:F1}");
+            gridSummary.Rows.Add("节点数量",              _solver.NumberOfNodes);
+            gridSummary.Rows.Add("时间步数",              _solver.TimeLevel + 1);
+            gridSummary.Rows.Add("峰值入流（m³/s）",    $"{peakIn:F2}");
+            gridSummary.Rows.Add("峰值出流（m³/s）",    $"{peakOut:F2}");
+            gridSummary.Rows.Add("洪峰削减率（%）",     $"{atten:F2}");
+            // 水量信息
+            gridSummary.Rows.Add("总入流量（万m³）",     $"{totalInflowVol / 10000.0:F2}");
+            gridSummary.Rows.Add("总出流量（万m³）",     $"{totalOutflowVol / 10000.0:F2}");
+            gridSummary.Rows.Add("净蓄水量变化（万m³）", $"{massImbVol / 10000.0:F2}");
+            gridSummary.Rows.Add("质量不平衡（%）",     $"{massImbPct:F4}");
 
             // 填充 CFL 条件查看表格（仅 Lax-Friedrichs 格式有效）
             gridCfl.Rows.Clear();
@@ -738,8 +806,9 @@ namespace FlowSim
                 gridCfl.Rows.Add("—", "—", "（仅 Lax-Friedrichs 格式显示 CFL）");
             }
 
-            // 初始化图表选项卡
+            // 初始化图表选项卡 + 数据查看选项卡
             UpdateChartsTab();
+            UpdateDataTab();
         }
 
         /// <summary>
@@ -782,6 +851,67 @@ namespace FlowSim
             UpdateLongProfile();
             UpdateXsChart();
         }
+
+        /// <summary>
+        /// 仿真完成后初始化"数据"选项卡：配置时间滑块范围并填充数据表。
+        /// </summary>
+        private void UpdateDataTab()
+        {
+            if (_solver == null || !_solver.Solved) return;
+
+            int nk = _solver.TimeLevel + 1;
+
+            // 设置数据表时间滑块范围
+            trkDataTime.Minimum       = 0;
+            trkDataTime.Maximum       = nk - 1;
+            trkDataTime.Value         = 0;
+            trkDataTime.TickFrequency = Math.Max(1, (nk - 1) / 20);
+            trkDataTime.Enabled       = true;
+
+            UpdateDataTable();
+        }
+
+        /// <summary>
+        /// 根据数据表时间滑块当前值，刷新"数据"选项卡的节点数据表。
+        /// 每行显示一个计算节点的水动力状态：桩号、流量、水位、水深、过水面积、水面宽、流速、弗劳德数。
+        /// </summary>
+        private void UpdateDataTable()
+        {
+            if (_solver == null || !_solver.Solved) return;
+
+            int k       = trkDataTime.Value;
+            double tHrs = k * _solver.TimeStep / 3600.0;
+            lblDataTime.Text = $"{tHrs:F1} 小时";
+
+            int nn             = _solver.NumberOfNodes;
+            double[] chainages = _solver.Channel.ChAtNode!;
+
+            gridData.Rows.Clear();
+            for (int i = 0; i < nn; i++)
+            {
+                double q  = _solver.Flow![k, i];
+                double wl = _solver.Level![k, i];
+                double h  = _solver.Depth![k, i];
+                double a  = _solver.Area  != null ? _solver.Area![k, i]      : double.NaN;
+                double tw = _solver.TopWidth != null ? _solver.TopWidth![k, i] : double.NaN;
+                double v  = _solver.Velocity != null ? _solver.Velocity![k, i] : double.NaN;
+                double fr = _solver.FroudeNumber != null ? _solver.FroudeNumber![k, i] : double.NaN;
+
+                gridData.Rows.Add(
+                    i,
+                    $"{chainages[i] / 1000.0:F3}",
+                    $"{q:F3}",
+                    $"{wl:F3}",
+                    $"{h:F3}",
+                    double.IsNaN(a)  ? "—" : $"{a:F2}",
+                    double.IsNaN(tw) ? "—" : $"{tw:F2}",
+                    double.IsNaN(v)  ? "—" : $"{v:F3}",
+                    double.IsNaN(fr) ? "—" : $"{fr:F4}");
+            }
+        }
+
+        /// <summary>数据表时间滑块滚动事件：刷新数据表。</summary>
+        private void trkDataTime_Scroll(object? sender, EventArgs e) => UpdateDataTable();
 
         /// <summary>
         /// 根据纵断面时间滑块当前值，重绘纵断面水位-距离图。
