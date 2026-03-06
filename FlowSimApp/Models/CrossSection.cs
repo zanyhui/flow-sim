@@ -923,14 +923,18 @@ namespace FlowSim.Models
         /// <summary>
         /// 返回不规则断面的地形轮廓点，用于 UI 可视化。
         /// <para>
-        /// 在原始 (X, Z) 折线的首尾各插入一个顶端点（高程 = ZMin + maxDepth），
-        /// 使返回的轮廓从左侧高点沿断面地形延伸至右侧高点，形成开口朝上的"U"形，
-        /// 可直接传入绘图接口作为填充多边形的顶点。
+        /// 在原始 (X, Z) 折线的首尾各插入一个顶端点，使返回的轮廓从左侧高点沿断面地形
+        /// 延伸至右侧高点，形成开口朝上的"U"形，可直接传入绘图接口作为填充多边形的顶点。
+        /// 顶端高程取 max(ZMin + maxDepth, Z[0], Z[n-1])，确保顶端不低于实际岸顶高程，
+        /// 避免多边形自交导致填充算法漏填河床区域。
         /// </para>
         /// </summary>
         public override (double[] xPts, double[] zPts) GetDisplayShape(double maxDepth = 10.0)
         {
-            double topZ = _zMin + Math.Max(maxDepth, 1.0);
+            // 顶端高程须不低于实际左右岸顶高程，否则多边形闭合线会低于岸顶，
+            // 导致奇偶填充规则将河床区域视为"外部"而留空。
+            double topZ = Math.Max(_zMin + Math.Max(maxDepth, 1.0),
+                                   Math.Max(Z[0], Z[Z.Length - 1]));
             int n = X.Length;
             var xs = new double[n + 2];
             var zs = new double[n + 2];
