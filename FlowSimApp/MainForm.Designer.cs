@@ -59,8 +59,10 @@ namespace FlowSim
             this.numDsBedLevel  = new NumericUpDown();   // 下游床底高程（m）
             // 不规则断面控件
             this.cmbXsType    = new ComboBox();
-            this.btnLoadXsCsv = new Button();
-            this.lblXsFile    = new Label();
+            this.btnLoadXsPts = new Button();   // 加载断面_测点 CSV
+            this.lblXsPtsFile = new Label();    // 显示测点文件名
+            this.btnLoadXsIdx = new Button();   // 加载断面_索引 CSV
+            this.lblXsIdxFile = new Label();    // 显示索引文件名
 
             // ---- 边界条件选项卡控件 ----
             this.cmbUsBcType = new ComboBox();           // 上游边界类型下拉框
@@ -156,23 +158,41 @@ namespace FlowSim
             cmbXsType.SelectedIndex = 0;
             cmbXsType.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbXsType.Dock = DockStyle.Fill;
-            cmbXsType.SelectedIndexChanged += (s, e) => btnLoadXsCsv.Enabled = cmbXsType.SelectedIndex == 1;
+            cmbXsType.SelectedIndexChanged += (s, e) =>
+            {
+                bool isIrr = cmbXsType.SelectedIndex == 1;
+                btnLoadXsPts.Enabled = btnLoadXsIdx.Enabled = isIrr;
+            };
 
-            // CSV 加载行：按钮 + 文件名标签放在同一个 Panel 里
-            var pnlCsvLoad = new Panel { Dock = DockStyle.Fill };
-            btnLoadXsCsv.Text    = "加载 CSV…";
-            btnLoadXsCsv.Enabled = false;
-            btnLoadXsCsv.Location = new System.Drawing.Point(0, 2);
-            btnLoadXsCsv.Size     = new System.Drawing.Size(100, 24);
-            btnLoadXsCsv.Click   += btnLoadXsCsv_Click;
-            lblXsFile.Text     = "(未选择)";
-            lblXsFile.Location = new System.Drawing.Point(106, 5);
-            lblXsFile.AutoSize = true;
-            pnlCsvLoad.Controls.Add(btnLoadXsCsv);
-            pnlCsvLoad.Controls.Add(lblXsFile);
+            // 断面_测点 CSV 加载行：按钮 + 文件名标签
+            var pnlCsvPts = new Panel { Dock = DockStyle.Fill };
+            btnLoadXsPts.Text     = "加载测点…";
+            btnLoadXsPts.Enabled  = false;
+            btnLoadXsPts.Location = new System.Drawing.Point(0, 2);
+            btnLoadXsPts.Size     = new System.Drawing.Size(90, 24);
+            btnLoadXsPts.Click   += btnLoadXsPts_Click;
+            lblXsPtsFile.Text     = "(未选择)";
+            lblXsPtsFile.Location = new System.Drawing.Point(96, 5);
+            lblXsPtsFile.AutoSize = true;
+            pnlCsvPts.Controls.Add(btnLoadXsPts);
+            pnlCsvPts.Controls.Add(lblXsPtsFile);
 
-            AddRow2(pnlChannel, "断面类型：",       cmbXsType);
-            AddRow2(pnlChannel, "不规则断面 CSV：", pnlCsvLoad);
+            // 断面_索引 CSV 加载行：按钮 + 文件名标签
+            var pnlCsvIdx = new Panel { Dock = DockStyle.Fill };
+            btnLoadXsIdx.Text     = "加载索引…";
+            btnLoadXsIdx.Enabled  = false;
+            btnLoadXsIdx.Location = new System.Drawing.Point(0, 2);
+            btnLoadXsIdx.Size     = new System.Drawing.Size(90, 24);
+            btnLoadXsIdx.Click   += btnLoadXsIdx_Click;
+            lblXsIdxFile.Text     = "(未选择)";
+            lblXsIdxFile.Location = new System.Drawing.Point(96, 5);
+            lblXsIdxFile.AutoSize = true;
+            pnlCsvIdx.Controls.Add(btnLoadXsIdx);
+            pnlCsvIdx.Controls.Add(lblXsIdxFile);
+
+            AddRow2(pnlChannel, "断面类型：",      cmbXsType);
+            AddRow2(pnlChannel, "断面_测点 CSV：", pnlCsvPts);
+            AddRow2(pnlChannel, "断面_索引 CSV：", pnlCsvIdx);
 
             tabChannel.Controls.Add(pnlChannel);
 
@@ -551,8 +571,10 @@ namespace FlowSim
         private TextBox txtLog;
         // 不规则断面控件
         private ComboBox cmbXsType;
-        private Button btnLoadXsCsv;
-        private Label lblXsFile;
+        private Button btnLoadXsPts;   // 加载断面_测点 CSV
+        private Label  lblXsPtsFile;   // 显示测点文件名
+        private Button btnLoadXsIdx;   // 加载断面_索引 CSV
+        private Label  lblXsIdxFile;   // 显示索引文件名
         // 集总调蓄库控件
         private CheckBox chkLumpedStorage;
         private NumericUpDown numLsYMin, numLsYMax, numLsSurfaceArea;

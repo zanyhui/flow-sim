@@ -24,10 +24,11 @@ namespace FlowSim
         /// <summary>当前仿真求解器实例（仿真前为 null）。</summary>
         private Solver? _solver;
 
-        /// <summary>已加载的不规则断面横坐标数组（m）。</summary>
-        private double[]? _xsX;
-        /// <summary>已加载的不规则断面高程数组（m）。</summary>
-        private double[]? _xsZ;
+        /// <summary>断面_测点.csv 解析结果：断面名称 → (起点距[], 高程[]) 测点数组映射。</summary>
+        private System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>? _xsMeasPts;
+
+        /// <summary>断面_索引.csv 解析结果：(断面名称, 起点里程, 糙率n, 备注) 列表，按起点里程升序排列。</summary>
+        private System.Collections.Generic.List<(string name, double chainage, double n, string remark)>? _xsIndex;
 
         /// <summary>图表鼠标悬停十字准线（每个 FormsPlot 各一个）。</summary>
         private ScottPlot.Plottable.Crosshair? _chFlow, _chProfile, _chLong, _chXs;
@@ -217,48 +218,134 @@ namespace FlowSim
         }
 
         /// <summary>
-        /// 加载不规则断面 CSV 文件（格式：首行为标题，第 1 列横坐标，第 2 列高程）。
-        /// 解析成功后将数据存入 <see cref="_xsX"/> 和 <see cref="_xsZ"/>。
+        /// 加载断面_测点 CSV 文件。
+        /// <para>
+        /// 文件格式：首行为标题（断面名称,起点距,高程），后续每行为一个测点记录。
+        /// 多个断面的测点可写在同一文件中，以断面名称区分。
+        /// 解析成功后将各断面的横坐标和高程数组存入 <see cref="_xsMeasPts"/>。
+        /// </para>
         /// </summary>
-        private void btnLoadXsCsv_Click(object sender, EventArgs e)
+        private void btnLoadXsPts_Click(object sender, EventArgs e)
         {
             using var dlg = new OpenFileDialog
             {
-                Title  = "选择不规则断面 CSV 文件",
+                Title  = "选择断面_测点 CSV 文件（断面名称, 起点距, 高程）",
                 Filter = "CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*"
             };
             if (dlg.ShowDialog() != DialogResult.OK) return;
             try
             {
-                var xs = new System.Collections.Generic.List<double>();
-                var zs = new System.Collections.Generic.List<double>();
+                var pts = new System.Collections.Generic.Dictionary<
+                    string,
+                    (System.Collections.Generic.List<double> x,
+                     System.Collections.Generic.List<double> z)>(StringComparer.OrdinalIgnoreCase);
+
                 bool skipHeader = true;
                 foreach (var line in System.IO.File.ReadAllLines(dlg.FileName))
                 {
                     if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("#")) continue;
                     var parts = line.Split(',');
-                    if (parts.Length < 2) continue;
-                    // 首行若含非数字则视为标题行跳过
-                    if (skipHeader && !double.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out _))
-                    { skipHeader = false; continue; }
-                    skipHeader = false;
-                    if (double.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out double x) &&
-                        double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out double z))
-                    { xs.Add(x); zs.Add(z); }
+                    if (parts.Length < 3) continue;
+                    // 首行若第 2 列含非数字，视为标题行跳过
+                    if (skipHeader)
+                    {
+                        skipHeader = false;
+                        if (!double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out _))
+                            continue;
+                    }
+                    string name = parts[0].Trim();
+                    if (!double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out double x)) continue;
+                    if (!double.TryParse(parts[2].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out double z)) continue;
+                    if (!pts.ContainsKey(name))
+                        pts[name] = (new System.Collections.Generic.List<double>(),
+                                     new System.Collections.Generic.List<double>());
+                    pts[name].x.Add(x);
+                    pts[name].z.Add(z);
                 }
-                if (xs.Count < 3)
-                    throw new InvalidOperationException("断面数据不足（至少需要 3 个点）。");
-                _xsX = xs.ToArray();
-                _xsZ = zs.ToArray();
-                lblXsFile.Text = System.IO.Path.GetFileName(dlg.FileName);
-                Log($"已加载断面文件：{dlg.FileName}（{_xsX.Length} 个点）");
+
+                foreach (var kvp in pts)
+                    if (kvp.Value.x.Count < 3)
+                        throw new InvalidOperationException(
+                            $"断面「{kvp.Key}」测点不足（至少需要 3 个点，当前 {kvp.Value.x.Count} 个）。");
+                if (pts.Count == 0)
+                    throw new InvalidOperationException("未解析到任何断面测点数据。");
+
+                _xsMeasPts = new System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>(
+                    StringComparer.OrdinalIgnoreCase);
+                int totalPts = 0;
+                foreach (var kvp in pts)
+                {
+                    _xsMeasPts[kvp.Key] = (kvp.Value.x.ToArray(), kvp.Value.z.ToArray());
+                    totalPts += kvp.Value.x.Count;
+                }
+
+                lblXsPtsFile.Text = System.IO.Path.GetFileName(dlg.FileName);
+                Log($"已加载断面测点文件：{dlg.FileName}（{_xsMeasPts.Count} 个断面，共 {totalPts} 个测点）");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"加载断面 CSV 失败：{ex.Message}", "错误",
+                MessageBox.Show($"加载断面_测点 CSV 失败：{ex.Message}", "错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        /// <summary>
+        /// 加载断面_索引 CSV 文件。
+        /// <para>
+        /// 文件格式：首行为标题（断面名称,起点里程,曼宁系数n,备注），后续每行为一个断面索引记录。
+        /// 备注列可省略。解析成功后将数据存入 <see cref="_xsIndex"/>，并按起点里程升序排列。
+        /// </para>
+        /// </summary>
+        private void btnLoadXsIdx_Click(object sender, EventArgs e)
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title  = "选择断面_索引 CSV 文件（断面名称, 起点里程, 曼宁系数n, 备注）",
+                Filter = "CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*"
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+            try
+            {
+                var idx = new System.Collections.Generic.List<(string name, double chainage, double n, string remark)>();
+                bool skipHeader = true;
+                foreach (var line in System.IO.File.ReadAllLines(dlg.FileName))
+                {
+                    if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("#")) continue;
+                    var parts = line.Split(',');
+                    if (parts.Length < 3) continue;
+                    // 首行若第 2 列含非数字，视为标题行跳过
+                    if (skipHeader)
+                    {
+                        skipHeader = false;
+                        if (!double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out _))
+                            continue;
+                    }
+                    string name = parts[0].Trim();
+                    if (!double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out double chainage)) continue;
+                    if (!double.TryParse(parts[2].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out double n)) continue;
+                    string remark = parts.Length > 3 ? parts[3].Trim() : string.Empty;
+                    idx.Add((name, chainage, n, remark));
+                }
+
+                if (idx.Count < 2)
+                    throw new InvalidOperationException("断面索引记录不足（至少需要 2 条记录）。");
+
+                // 按起点里程升序排列
+                idx.Sort((a, b) => a.chainage.CompareTo(b.chainage));
+                _xsIndex = idx;
+
+                lblXsIdxFile.Text = System.IO.Path.GetFileName(dlg.FileName);
+                Log($"已加载断面索引文件：{dlg.FileName}（{_xsIndex.Count} 条记录）");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"加载断面_索引 CSV 失败：{ex.Message}", "错误",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -348,16 +435,32 @@ namespace FlowSim
             var channel = new Channel(usBoundary, dsBoundary, initialFlow, roughness, width,
                                       InitializationMethod.GVFEquation);
 
-            // 不规则断面：将加载的 XS 数据（以 usBedLevel/dsBedLevel 为床底）注入河道
-            if (cmbXsType.SelectedIndex == 1 && _xsX != null && _xsZ != null)
+            // 不规则断面：由断面_测点 + 断面_索引两个 CSV 文件构建多断面模型
+            if (cmbXsType.SelectedIndex == 1)
             {
-                double zMinOrig = _xsZ.Min();
-                // 将 Z 数组整体平移，使最低点对齐上/下游床底高程
-                double[] zUs = System.Array.ConvertAll(_xsZ, z => z - zMinOrig + usBedLevel);
-                double[] zDs = System.Array.ConvertAll(_xsZ, z => z - zMinOrig + dsBedLevel);
-                var usXs = new IrregularSection(_xsX, zUs, roughness, bedSlope);
-                var dsXs = new IrregularSection(_xsX, zDs, roughness, bedSlope);
-                channel.SetCrossSection(new[] { 0.0, length }, new CrossSection[] { usXs, dsXs });
+                if (_xsMeasPts == null || _xsIndex == null)
+                    throw new InvalidOperationException(
+                        "选择不规则断面时，须先加载断面_测点 CSV 和断面_索引 CSV 文件。");
+
+                var chainageList = new System.Collections.Generic.List<double>();
+                var sectionList  = new System.Collections.Generic.List<CrossSection>();
+
+                foreach (var (name, chainage, n, _) in _xsIndex)
+                {
+                    if (!_xsMeasPts.TryGetValue(name, out var pts))
+                    {
+                        Log($"警告：断面索引中的断面「{name}」在测点文件中未找到，已跳过。");
+                        continue;
+                    }
+                    chainageList.Add(chainage);
+                    sectionList.Add(new IrregularSection(pts.x, pts.z, n));
+                }
+
+                if (chainageList.Count < 2)
+                    throw new InvalidOperationException(
+                        "有效的不规则断面数量不足（至少需要 2 个）。请检查断面名称是否匹配。");
+
+                channel.SetCrossSection(chainageList.ToArray(), sectionList.ToArray());
             }
 
             // 集总调蓄库：创建 LumpedStorage 并挂接到下游 FixedDepth 边界
