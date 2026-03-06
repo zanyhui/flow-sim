@@ -31,7 +31,7 @@ namespace FlowSim
         private System.Collections.Generic.List<(string name, double chainage, double n, string remark)>? _xsIndex;
 
         /// <summary>图表鼠标悬停十字准线（每个 FormsPlot 各一个）。</summary>
-        private ScottPlot.Plottable.Crosshair? _chFlow, _chProfile, _chLong, _chXs;
+        private ScottPlot.Plottable.Crosshair? _chFlow, _chProfile, _chLong, _chXs, _chXsPreview;
 
         /// <summary>
         /// 构造函数：调用 WinForms 生成的控件初始化代码，并为所有图表安装鼠标悬停十字准线。
@@ -49,10 +49,11 @@ namespace FlowSim
         /// </summary>
         private void InitCrosshairs()
         {
-            _chFlow    = AttachCrosshair(plotFlow,        () => _chFlow);
-            _chProfile = AttachCrosshair(plotProfile,     () => _chProfile);
-            _chLong    = AttachCrosshair(plotLongProfile, () => _chLong);
-            _chXs      = AttachCrosshair(plotXsShape,     () => _chXs);
+            _chFlow      = AttachCrosshair(plotFlow,        () => _chFlow);
+            _chProfile   = AttachCrosshair(plotProfile,     () => _chProfile);
+            _chLong      = AttachCrosshair(plotLongProfile, () => _chLong);
+            _chXs        = AttachCrosshair(plotXsShape,     () => _chXs);
+            _chXsPreview = AttachCrosshair(plotXsPreview,   () => _chXsPreview);
         }
 
         /// <summary>
@@ -284,6 +285,7 @@ namespace FlowSim
 
                 lblXsPtsFile.Text = System.IO.Path.GetFileName(dlg.FileName);
                 Log($"已加载断面测点文件：{dlg.FileName}（{_xsMeasPts.Count} 个断面，共 {totalPts} 个测点）");
+                RefreshXsPreviewDropdown();
             }
             catch (Exception ex)
             {
@@ -342,12 +344,88 @@ namespace FlowSim
 
                 lblXsIdxFile.Text = System.IO.Path.GetFileName(dlg.FileName);
                 Log($"已加载断面索引文件：{dlg.FileName}（{_xsIndex.Count} 条记录）");
+                RefreshXsPreviewDropdown();
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"加载断面_索引 CSV 失败：{ex.Message}", "错误",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        /// <summary>
+        /// 当断面_测点或断面_索引 CSV 任一文件加载成功后，刷新"预览断面"下拉框。
+        /// 若两个文件均已加载，按断面_索引顺序填充所有断面名称并启用下拉框；
+        /// 同时自动预览第一个断面。
+        /// </summary>
+        private void RefreshXsPreviewDropdown()
+        {
+            cmbXsPreview.Items.Clear();
+            if (_xsMeasPts == null)
+            {
+                cmbXsPreview.Enabled = false;
+                return;
+            }
+
+            // 若索引已加载，按索引顺序添加；否则按测点字典顺序添加
+            var names = _xsIndex != null
+                ? _xsIndex.ConvertAll(r => r.name)
+                : new System.Collections.Generic.List<string>(_xsMeasPts.Keys);
+
+            foreach (var n in names)
+                if (_xsMeasPts.ContainsKey(n))
+                    cmbXsPreview.Items.Add(n);
+
+            if (cmbXsPreview.Items.Count > 0)
+            {
+                cmbXsPreview.Enabled = true;
+                cmbXsPreview.SelectedIndex = 0;  // 触发 SelectedIndexChanged → 绘制预览
+            }
+            else
+            {
+                cmbXsPreview.Enabled = false;
+            }
+        }
+
+        /// <summary>
+        /// "预览断面"下拉框选择项变更事件：绘制所选断面的横断面形状图。
+        /// X 轴为起点距（m），Y 轴为高程（m），以折线绘制地形轮廓。
+        /// </summary>
+        private void cmbXsPreview_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            string? name = cmbXsPreview.SelectedItem as string;
+            if (name == null || _xsMeasPts == null || !_xsMeasPts.TryGetValue(name, out var pts)) return;
+
+            plotXsPreview.Plot.Clear();
+            _chXsPreview = ReAddCrosshair(plotXsPreview);
+
+            double[] x = pts.x;
+            double[] z = pts.z;
+
+            // 绘制地形折线
+            var terrain = plotXsPreview.Plot.AddScatter(x, z, label: "地形轮廓");
+            terrain.Color      = Color.SaddleBrown;
+            terrain.LineWidth  = 2;
+            terrain.MarkerSize = 5;
+            terrain.MarkerShape = ScottPlot.MarkerShape.filledCircle;
+
+            // 若索引已加载，查找该断面对应的曼宁 n，显示在标题中
+            string titleSuffix = "";
+            if (_xsIndex != null)
+            {
+                int foundIdx = _xsIndex.FindIndex(r => string.Equals(r.name, name, StringComparison.OrdinalIgnoreCase));
+                if (foundIdx >= 0)
+                {
+                    var rec = _xsIndex[foundIdx];
+                    titleSuffix = $"，桩号 {rec.chainage / 1000.0:F1} km，n = {rec.n:F3}";
+                }
+            }
+
+            plotXsPreview.Plot.XLabel("起点距（m）");
+            plotXsPreview.Plot.YLabel("高程（m）");
+            plotXsPreview.Plot.Title($"断面 {name}{titleSuffix}");
+            plotXsPreview.Plot.AxisAuto();
+            plotXsPreview.Refresh();
         }
 
         /// <summary>

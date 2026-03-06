@@ -63,6 +63,9 @@ namespace FlowSim
             this.lblXsPtsFile = new Label();    // 显示测点文件名
             this.btnLoadXsIdx = new Button();   // 加载断面_索引 CSV
             this.lblXsIdxFile = new Label();    // 显示索引文件名
+            // 不规则断面预览控件
+            this.cmbXsPreview   = new ComboBox();   // 断面名称选择下拉框
+            this.plotXsPreview  = new FormsPlot();  // 断面形状预览图
 
             // ---- 边界条件选项卡控件 ----
             this.cmbUsBcType = new ComboBox();           // 上游边界类型下拉框
@@ -193,6 +196,19 @@ namespace FlowSim
             AddRow2(pnlChannel, "断面类型：",      cmbXsType);
             AddRow2(pnlChannel, "断面_测点 CSV：", pnlCsvPts);
             AddRow2(pnlChannel, "断面_索引 CSV：", pnlCsvIdx);
+
+            // 断面预览行：断面选择下拉框 + 预览图
+            cmbXsPreview.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbXsPreview.Dock = DockStyle.Fill;
+            cmbXsPreview.Enabled = false;
+            cmbXsPreview.SelectedIndexChanged += cmbXsPreview_SelectedIndexChanged;
+            AddRow2(pnlChannel, "预览断面：", cmbXsPreview);
+
+            // 预览图 - 跨两列，显示断面形状
+            plotXsPreview.Dock = DockStyle.Fill;
+            plotXsPreview.MinimumSize = new System.Drawing.Size(0, 180);
+            pnlChannel.SetColumnSpan(plotXsPreview, 2);
+            pnlChannel.Controls.Add(plotXsPreview);
 
             tabChannel.Controls.Add(pnlChannel);
 
@@ -575,6 +591,9 @@ namespace FlowSim
         private Label  lblXsPtsFile;   // 显示测点文件名
         private Button btnLoadXsIdx;   // 加载断面_索引 CSV
         private Label  lblXsIdxFile;   // 显示索引文件名
+        // 不规则断面预览控件
+        private ComboBox  cmbXsPreview;   // 断面名称选择下拉框
+        private FormsPlot plotXsPreview;  // 断面形状预览图
         // 集总调蓄库控件
         private CheckBox chkLumpedStorage;
         private NumericUpDown numLsYMin, numLsYMax, numLsSurfaceArea;
