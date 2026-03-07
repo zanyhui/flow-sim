@@ -40,6 +40,20 @@ namespace FlowSim.Models
         /// <summary>牛顿迭代最大迭代次数，默认 100。</summary>
         public int MaxIterations { get; set; } = 100;
 
+        /// <summary>
+        /// 回退线搜索最大回退次数，默认 8（步长从 1 依次折半至 1/128）。
+        /// 设为 0 可停用线搜索，退化为纯 Newton-Raphson。
+        /// </summary>
+        public int MaxBacktracking { get; set; } = 8;
+
+        /// <summary>
+        /// 回退线搜索触发阈值（相对于当前残差的倍数），默认 20.0。
+        /// 当新残差超过当前残差的此倍数时才激活折半回退，
+        /// 允许牛顿法在收敛过程中发生适度振荡（self-correction），
+        /// 同时防止残差爆炸性增长（灾难性发散）。
+        /// </summary>
+        public double BacktrackingThreshold { get; set; } = 20.0;
+
         // 当前时间层的未知量向量 [h0, Q0, h1, Q1, ..., h_{N-1}, Q_{N-1}]
         private readonly double[] _unknowns;
 
@@ -82,10 +96,13 @@ namespace FlowSim.Models
         /// 2. 在牛顿迭代循环中：
         ///    a. 将当前估计值写入 Depth/Flow 数组；
         ///    b. 计算残差向量 R（<see cref="ComputeResidualVector"/>）；
-        ///    c. 计算雅可比矩阵 J（<see cref="ComputeJacobian"/>）；
-        ///    d. 用 MathNet 求解线性方程组 J·Δ = -R；
-        ///    e. 更新未知量 x += Δ；
-        ///    f. 检验 ||R|| &lt; tol（欧氏范数收敛准则）。
+        ///    c. 检验 ||R|| &lt; tol（欧氏范数收敛准则），满足则退出；
+        ///    d. 计算雅可比矩阵 J（<see cref="ComputeJacobian"/>）；
+        ///    e. 用 MathNet 求解线性方程组 J·Δ = -R；
+        ///    f. 回退线搜索（Backtracking Line Search）：从步长 α=1 开始，
+        ///       若 ||R(x+αΔ)|| &gt; <see cref="BacktrackingThreshold"/>·||R(x)||，则 α 折半重试，最多 <see cref="MaxBacktracking"/> 次；
+        ///       若所有折半步均不满足阈值，则回退到全步长（纯牛顿步）；
+        ///    g. 更新未知量 x += α·Δ。
         /// 3. 收敛后进入下一时间层。
         /// </para>
         /// </summary>
@@ -115,8 +132,10 @@ namespace FlowSim.Models
 
                 int iteration = 0;
                 bool converged = false;
+                int maxBacktrack = MaxBacktracking;
+                double bkThreshold = BacktrackingThreshold;
 
-                // 牛顿-拉弗森迭代循环
+                // 牛顿-拉弗森迭代循环（含回退线搜索）
                 while (!converged)
                 {
                     iteration++;
@@ -134,8 +153,16 @@ namespace FlowSim.Models
                         Flow![TimeLevel, i]  = _unknowns[2 * i + 1];
                     }
 
-                    // 计算非线性残差向量 R
+                    // 计算非线性残差向量 R，并计算欧氏范数作为收敛指标
                     ComputeResidualVector();
+                    double error = 0;
+                    for (int k = 0; k < _R.Length; k++) error += _R[k] * _R[k];
+                    error = Math.Sqrt(error);
+
+                    if (verbose == 3) Console.WriteLine($">> Iteration #{iteration}: Error = {error}");
+
+                    // 收敛检查：在应用牛顿步之前判断残差是否已满足容差
+                    if (error < tolerance) { converged = true; break; }
 
                     // 计算雅可比矩阵 J（2N × 2N 带状稀疏矩阵）
                     double[,] J = ComputeJacobian();
@@ -147,17 +174,47 @@ namespace FlowSim.Models
                     try { delta = Jm.Solve(-Rv); }
                     catch { throw new InvalidOperationException("Jacobian solve failed."); }
 
-                    // 更新未知量：x_new = x_old + Δ
-                    for (int k = 0; k < _unknowns.Length; k++)
-                        _unknowns[k] += delta[k];
+                    // 回退线搜索（Backtracking line search）
+                    // 当牛顿步导致残差爆炸增长（超过 BacktrackingThreshold 倍）时，
+                    // 将步长逐步折半以找到合理的前进方向；允许适度振荡（因子 < 阈值）
+                    // 以维持牛顿法的快速收敛特性。
+                    // 若所有折半步均未满足阈值，则回退至全步长（纯牛顿步）。
+                    double lineAlpha = 1.0;
+                    double[] xOld = (double[])_unknowns.Clone();
+                    bool stepReduced = false;
+                    for (int ls = 0; ls < maxBacktrack; ls++)
+                    {
+                        // 试探新的估计值：x_trial = x_old + α·Δ
+                        for (int k = 0; k < _unknowns.Length; k++)
+                            _unknowns[k] = xOld[k] + lineAlpha * delta[k];
 
-                    // 计算残差向量的欧氏范数作为收敛指标
-                    double error = 0;
-                    for (int k = 0; k < _R.Length; k++) error += _R[k] * _R[k];
-                    error = Math.Sqrt(error);
+                        // 将试探值写入 Depth/Flow 并重算残差
+                        for (int i = 0; i < NumberOfNodes; i++)
+                        {
+                            Depth![TimeLevel, i] = _unknowns[2 * i];
+                            Flow![TimeLevel, i]  = _unknowns[2 * i + 1];
+                        }
+                        ComputeResidualVector();
+                        double errNew = 0;
+                        for (int k = 0; k < _R.Length; k++) errNew += _R[k] * _R[k];
+                        errNew = Math.Sqrt(errNew);
 
-                    if (verbose == 3) Console.WriteLine($">> Iteration #{iteration}: Error = {error}");
-                    if (error < tolerance) converged = true;
+                        if (errNew <= bkThreshold * error) { stepReduced = true; break; }   // 满足阈值，接受此步长
+                        lineAlpha *= 0.5;                                                     // 否则缩减步长，重试
+                    }
+
+                    if (!stepReduced)
+                    {
+                        // 所有折半步均未满足阈值：回退到全步长牛顿步，允许短暂振荡
+                        for (int k = 0; k < _unknowns.Length; k++)
+                            _unknowns[k] = xOld[k] + delta[k];
+                        // Depth/Flow 将在下一迭代起点重新写入，_R 将被重新计算
+                        if (verbose == 3) Console.WriteLine($"   (backtrack: fallback to full step α=1)");
+                    }
+                    else if (verbose == 3 && lineAlpha < 1.0)
+                    {
+                        Console.WriteLine($"   (backtrack: accepted α={lineAlpha:G4})");
+                    }
                 }
 
                 if (verbose == 2) Console.WriteLine($">> {iteration} iterations.");
