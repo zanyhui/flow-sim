@@ -463,16 +463,18 @@ namespace FlowSim
             }
 
             // ── 辅助：构造求解器 ──
+            // 提前在 UI 线程上读取所有控件值，避免 MainFactory 在后台线程调用时触发跨线程异常。
+            string capturedSolverType = cmbSolverMethod.SelectedItem?.ToString() ?? "Preissmann";
+            double capturedTheta      = (double)numTheta.Value;
+            double capturedTolerance  = (double)numTolerance.Value;
+            int    capturedMaxIter    = (int)numMaxIter.Value;
+
             Solver MakeSolver(Channel ch)
             {
-                string solverType = cmbSolverMethod.SelectedItem?.ToString() ?? "Preissmann";
-                if (solverType == "Lax-Friedrichs")
+                if (capturedSolverType == "Lax-Friedrichs")
                     return new LaxSolver(ch, timeStep, spatialStep, simTime);
-                double theta     = (double)numTheta.Value;
-                double tolerance = (double)numTolerance.Value;
-                int    maxIter   = (int)numMaxIter.Value;
-                return new PreissmannSolver(ch, theta, timeStep, spatialStep, simTime)
-                    { Tolerance = tolerance, MaxIterations = maxIter };
+                return new PreissmannSolver(ch, capturedTheta, timeStep, spatialStep, simTime)
+                    { Tolerance = capturedTolerance, MaxIterations = capturedMaxIter };
             }
 
             // ── 支流1 ──
