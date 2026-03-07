@@ -117,13 +117,19 @@ namespace FlowSim
 
             // ── 求解器参数 GroupBox ──
             var grpSolver = new GroupBox { Text = "求解器参数", AutoSize = true, Width = 360, Padding = new Padding(5) };
-            var tblSolver = MakeTable(4, 2);
+            var tblSolver = MakeTable(5, 2);
+
+            cmbSolverMethod = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+            cmbSolverMethod.Items.AddRange(new object[] { "Preissmann（隐式）", "Lax-Friedrichs（显式）" });
+            cmbSolverMethod.SelectedIndex = 0;
+            cmbSolverMethod.SelectedIndexChanged += cmbSolverMethod_SelectedIndexChanged;
 
             numTheta      = MakeNum(0.6m, 0.5m, 1, 2, 1, 0.05m);
             numTimeStep   = MakeNum(3600, 60, 86400, 0, 1, 600m);
             numSpatialStep= MakeNum(1000, 100, 50000, 0, 1, 500m);
             numTolerance  = MakeNum(1e-6m, 1e-10m, 1e-2m, 8, 1, 1e-7m);
 
+            AddRow2(tblSolver, "求解算法：",               cmbSolverMethod);
             AddRow2(tblSolver, "θ（Preissmann 权重）：", numTheta);
             AddRow2(tblSolver, "时间步长 dt（s）：",      numTimeStep);
             AddRow2(tblSolver, "空间步长 dx（m）：",      numSpatialStep);
@@ -283,6 +289,7 @@ namespace FlowSim
         private NumericUpDown numTolerance      = null!;
         private NumericUpDown numJamSpillways   = null!;
         private NumericUpDown numJamSluices     = null!;
+        private ComboBox      cmbSolverMethod   = null!;
 
         private CheckBox  chkWithGerd    = null!;
         private Button    btnRun         = null!;

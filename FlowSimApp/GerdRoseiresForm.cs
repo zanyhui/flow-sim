@@ -23,7 +23,7 @@ namespace FlowSim
     public partial class GerdRoseiresForm : Form
     {
         // ── 上次仿真结果（用于图表更新）──
-        private PreissmannSolver? _solver;
+        private Solver? _solver;
         private ScottPlot.Plottable.Crosshair? _chQ, _chZ;
 
         // ── 构造函数 ──
@@ -119,6 +119,14 @@ namespace FlowSim
         private void btnBrowseSluice_Click(object sender, EventArgs e)   => BrowseCsv(txtSluicePath,    "选择 Roseires 深孔泄槽流量 CSV");
         private void btnBrowseCoords_Click(object sender, EventArgs e)   => BrowseCsv(txtCoordsPath,   "选择中心线坐标 CSV（可选）");
 
+        // 切换求解算法时显示/隐藏仅 Preissmann 专用的参数（θ 和迭代容差）
+        private void cmbSolverMethod_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            bool isPreissmann = cmbSolverMethod.SelectedIndex == 0;
+            numTheta.Enabled     = isPreissmann;
+            numTolerance.Enabled = isPreissmann;
+        }
+
         // ====================================================================
         // 运行仿真
         // ====================================================================
@@ -142,6 +150,7 @@ namespace FlowSim
                 int    jamSpillways   = (int)numJamSpillways.Value;
                 int    jamSluices     = (int)numJamSluices.Value;
                 bool   withGerd       = chkWithGerd.Checked;
+                bool   useLax         = cmbSolverMethod.SelectedIndex == 1;
 
                 // 验证文件路径
                 string xsPath       = txtXsPath.Text;
@@ -176,7 +185,7 @@ namespace FlowSim
                             string.IsNullOrWhiteSpace(coordsPath) ? null : coordsPath,
                             initialGerdLevel, initialRoseiresLevel,
                             theta, timeStep, spatialStep, simTimeSec, tolerance,
-                            jamSpillways, jamSluices, withGerd);
+                            jamSpillways, jamSluices, withGerd, useLax);
 
                         Invoke(() =>
                         {
@@ -207,12 +216,13 @@ namespace FlowSim
         // 核心仿真逻辑（翻译自 model.py）
         // ====================================================================
 
-        private PreissmannSolver RunSimulation(
+        private Solver RunSimulation(
             string xsPath, string inflowPath, string volCurvePath,
             string spillwayPath, string sluicePath, string? coordsPath,
             double initialGerdLevel, double initialRoseiresLevel,
             double theta, double timeStep, double spatialStep, double simTime,
-            double tolerance, int jammedSpillways, int jammedSluices, bool withGerd)
+            double tolerance, int jammedSpillways, int jammedSluices, bool withGerd,
+            bool useLax = false)
         {
             Log("正在加载入库过程线...");
             var inflowHyd = LoadHydrographFromCsv(inflowPath);
@@ -262,25 +272,47 @@ namespace FlowSim
             Log("正在设置断面...");
             channel.SetCrossSection(chainages, sections);
 
-            Log($"正在运行 Preissmann 仿真（θ={theta}，dt={timeStep} s，dx={spatialStep} m，T={duration / 3600.0:F0} h）...");
-            var solver = new PreissmannSolver(channel, theta, timeStep, spatialStep, duration)
+            Solver solver;
+            if (useLax)
             {
-                Tolerance = tolerance
-            };
-
-            int totalSteps  = solver.NumberOfTimeLevels - 1;
-            int logInterval = Math.Max(1, totalSteps / 20);
-            solver.StepCallback = (step, total, stepMs, totalSec) =>
-            {
-                if (step % logInterval == 0 || step == total)
+                Log($"正在运行 Lax-Friedrichs 仿真（dt={timeStep} s，dx={spatialStep} m，T={duration / 3600.0:F0} h）...");
+                var lax = new LaxSolver(channel, timeStep, spatialStep, duration);
+                lax.StepCallback = (step, total, stepMs, totalSec) =>
                 {
-                    double pct    = total > 0 ? (double)step / total * 100 : 100;
-                    double simHrs = step * timeStep / 3600.0;
-                    Invoke(() => Log($"  [{pct,5:F1}%] 步骤 {step}/{total}，t={simHrs:F1} h，步时 {stepMs:F1} ms"));
-                }
-            };
+                    int totalStepsL  = lax.NumberOfTimeLevels - 1;
+                    int logIntervalL = Math.Max(1, totalStepsL / 20);
+                    if (step % logIntervalL == 0 || step == total)
+                    {
+                        double pct    = total > 0 ? (double)step / total * 100 : 100;
+                        double simHrs = step * timeStep / 3600.0;
+                        Invoke(() => Log($"  [{pct,5:F1}%] 步骤 {step}/{total}，t={simHrs:F1} h，步时 {stepMs:F1} ms"));
+                    }
+                };
+                lax.Run(verbose: 0);
+                solver = lax;
+            }
+            else
+            {
+                Log($"正在运行 Preissmann 仿真（θ={theta}，dt={timeStep} s，dx={spatialStep} m，T={duration / 3600.0:F0} h）...");
+                var preissmann = new PreissmannSolver(channel, theta, timeStep, spatialStep, duration)
+                {
+                    Tolerance = tolerance
+                };
+                int totalSteps  = preissmann.NumberOfTimeLevels - 1;
+                int logInterval = Math.Max(1, totalSteps / 20);
+                preissmann.StepCallback = (step, total, stepMs, totalSec) =>
+                {
+                    if (step % logInterval == 0 || step == total)
+                    {
+                        double pct    = total > 0 ? (double)step / total * 100 : 100;
+                        double simHrs = step * timeStep / 3600.0;
+                        Invoke(() => Log($"  [{pct,5:F1}%] 步骤 {step}/{total}，t={simHrs:F1} h，步时 {stepMs:F1} ms"));
+                    }
+                };
+                preissmann.Run(verbose: 0);
+                solver = preissmann;
+            }
 
-            solver.Run(verbose: 0);
             return solver;
         }
 
@@ -288,7 +320,7 @@ namespace FlowSim
         // 图表更新
         // ====================================================================
 
-        private void UpdateCharts(PreissmannSolver solver)
+        private void UpdateCharts(Solver solver)
         {
             // ── Q-t 图（上游/下游流量历时曲线）──
             plotFlow.Plot.Clear();
