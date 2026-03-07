@@ -32,11 +32,16 @@ namespace FlowSim
             // ── 主拆分条（左侧参数 | 右侧结果）──
             var splitMain = new SplitContainer
             {
-                Dock         = DockStyle.Fill,
-                Orientation  = System.Windows.Forms.Orientation.Vertical,
-                SplitterDistance = 380,
-                Panel1MinSize    = 300,
-                Panel2MinSize    = 400
+                Dock          = DockStyle.Fill,
+                Orientation   = System.Windows.Forms.Orientation.Vertical,
+                Panel1MinSize = 300,
+                Panel2MinSize = 400
+            };
+            // SplitterDistance must be set after the form has a real width (deferred to Load)
+            this.Load += (s, e) =>
+            {
+                try { splitMain.SplitterDistance = 380; }
+                catch { /* ignore if form is too narrow */ }
             };
             this.Controls.Add(splitMain);
 
