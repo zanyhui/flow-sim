@@ -261,11 +261,17 @@ namespace FlowSim
             // 右侧：结果 TabControl
             // ══════════════════════════════════════════════
             var tabResults = new TabControl { Dock = DockStyle.Fill };
-            var tabPageResults = new TabPage("结果");
-            var tabPageCharts  = new TabPage("图表");
-            var tabPageData    = new TabPage("数据");
-            var tabPageLayout  = new TabPage("平面图");
+            var tabPageResults  = new TabPage("干流结果");
+            var tabPageJunction = new TabPage("汇流水文");
+            var tabPageTrib1    = new TabPage("支流1");
+            var tabPageTrib2    = new TabPage("支流2");
+            var tabPageCharts   = new TabPage("图表");
+            var tabPageData     = new TabPage("数据");
+            var tabPageLayout   = new TabPage("平面图");
             tabResults.TabPages.Add(tabPageResults);
+            tabResults.TabPages.Add(tabPageJunction);
+            tabResults.TabPages.Add(tabPageTrib1);
+            tabResults.TabPages.Add(tabPageTrib2);
             tabResults.TabPages.Add(tabPageCharts);
             tabResults.TabPages.Add(tabPageData);
             tabResults.TabPages.Add(tabPageLayout);
@@ -322,6 +328,36 @@ namespace FlowSim
             splitResultsH.Panel2.Controls.Add(tabBottom);
 
             tabPageResults.Controls.Add(splitResultsH);
+
+            // ── Tab "汇流水文" ──
+            plotJunction.Dock = DockStyle.Fill;
+            tabPageJunction.Controls.Add(plotJunction);
+
+            // ── Tab "支流1" ──
+            var splitTrib1 = new SplitContainer
+            {
+                Dock             = DockStyle.Fill,
+                Orientation      = System.Windows.Forms.Orientation.Vertical,
+                SplitterDistance = 400
+            };
+            plotTrib1Flow.Dock    = DockStyle.Fill;
+            plotTrib1Profile.Dock = DockStyle.Fill;
+            splitTrib1.Panel1.Controls.Add(plotTrib1Flow);
+            splitTrib1.Panel2.Controls.Add(plotTrib1Profile);
+            tabPageTrib1.Controls.Add(splitTrib1);
+
+            // ── Tab "支流2" ──
+            var splitTrib2 = new SplitContainer
+            {
+                Dock             = DockStyle.Fill,
+                Orientation      = System.Windows.Forms.Orientation.Vertical,
+                SplitterDistance = 400
+            };
+            plotTrib2Flow.Dock    = DockStyle.Fill;
+            plotTrib2Profile.Dock = DockStyle.Fill;
+            splitTrib2.Panel1.Controls.Add(plotTrib2Flow);
+            splitTrib2.Panel2.Controls.Add(plotTrib2Profile);
+            tabPageTrib2.Controls.Add(splitTrib2);
 
             // ── Tab "图表" ──
             var splitCharts = new SplitContainer
@@ -483,6 +519,15 @@ namespace FlowSim
 
         // 平面图 tab
         private FormsPlot plotChannelLayout = new FormsPlot();
+
+        // 汇流水文 tab
+        private FormsPlot plotJunction = new FormsPlot();
+
+        // 支流1 / 支流2 结果 tab
+        private FormsPlot plotTrib1Flow    = new FormsPlot();
+        private FormsPlot plotTrib1Profile = new FormsPlot();
+        private FormsPlot plotTrib2Flow    = new FormsPlot();
+        private FormsPlot plotTrib2Profile = new FormsPlot();
 
         #endregion
     }

@@ -34,11 +34,20 @@ namespace FlowSim
         /// <summary>汇流求解器（含三段子求解器）。</summary>
         private JunctionSolver? _junctionSolver;
 
-        /// <summary>当前活跃求解器（仿真后指向干流求解器）。</summary>
+        /// <summary>干流求解器（仿真后赋值）。</summary>
         private Solver? _solver;
+
+        /// <summary>支流1求解器（仿真后赋值，用于填充支流1结果选项卡）。</summary>
+        private Solver? _solver1;
+
+        /// <summary>支流2求解器（仿真后赋值，用于填充支流2结果选项卡）。</summary>
+        private Solver? _solver2;
 
         /// <summary>图表鼠标悬停十字准线。</summary>
         private ScottPlot.Plottable.Crosshair? _chFlow, _chProfile, _chLong, _chXs;
+        private ScottPlot.Plottable.Crosshair? _chJunction;
+        private ScottPlot.Plottable.Crosshair? _chTrib1Flow, _chTrib1Profile;
+        private ScottPlot.Plottable.Crosshair? _chTrib2Flow, _chTrib2Profile;
 
         public ConfluenceForm()
         {
@@ -56,6 +65,11 @@ namespace FlowSim
             _chProfile = AttachCrosshair(plotProfile,     () => _chProfile);
             _chLong    = AttachCrosshair(plotLongProfile, () => _chLong);
             _chXs      = AttachCrosshair(plotXsShape,     () => _chXs);
+            _chJunction     = AttachCrosshair(plotJunction,     () => _chJunction);
+            _chTrib1Flow    = AttachCrosshair(plotTrib1Flow,    () => _chTrib1Flow);
+            _chTrib1Profile = AttachCrosshair(plotTrib1Profile, () => _chTrib1Profile);
+            _chTrib2Flow    = AttachCrosshair(plotTrib2Flow,    () => _chTrib2Flow);
+            _chTrib2Profile = AttachCrosshair(plotTrib2Profile, () => _chTrib2Profile);
         }
 
         private static ScottPlot.Plottable.Crosshair AttachCrosshair(
@@ -91,10 +105,15 @@ namespace FlowSim
             ch.VerticalLine.PositionLabel   = true;
             ch.LineWidth                    = 1;
             ch.Color                        = Color.FromArgb(160, Color.DimGray);
-            if      (fp == plotFlow)        _chFlow    = ch;
-            else if (fp == plotProfile)     _chProfile = ch;
-            else if (fp == plotLongProfile) _chLong    = ch;
-            else if (fp == plotXsShape)     _chXs      = ch;
+            if      (fp == plotFlow)         _chFlow         = ch;
+            else if (fp == plotProfile)      _chProfile      = ch;
+            else if (fp == plotLongProfile)  _chLong         = ch;
+            else if (fp == plotXsShape)      _chXs           = ch;
+            else if (fp == plotJunction)     _chJunction     = ch;
+            else if (fp == plotTrib1Flow)    _chTrib1Flow    = ch;
+            else if (fp == plotTrib1Profile) _chTrib1Profile = ch;
+            else if (fp == plotTrib2Flow)    _chTrib2Flow    = ch;
+            else if (fp == plotTrib2Profile) _chTrib2Profile = ch;
             return ch;
         }
 
@@ -317,9 +336,16 @@ namespace FlowSim
                         jSolver.Run(verbose: 0);
                         Invoke(() =>
                         {
-                            _solver = jSolver.MainSolver;
+                            _solver  = jSolver.MainSolver;
+                            _solver1 = jSolver.Tributary1Solver;
+                            _solver2 = jSolver.Tributary2Solver;
                             Log($"汇流仿真成功完成，干流模拟时长 {_solver!.TotalSimDuration / 3600.0:F1} h。");
                             UpdateResults();
+                            UpdateJunctionChart();
+                            UpdateTributaryResults(_solver1, "支流1", plotTrib1Flow, plotTrib1Profile,
+                                ref _chTrib1Flow, ref _chTrib1Profile);
+                            UpdateTributaryResults(_solver2, "支流2", plotTrib2Flow, plotTrib2Profile,
+                                ref _chTrib2Flow, ref _chTrib2Profile);
                             btnSave.Enabled = true;
                             btnRun.Enabled  = true;
                         });
@@ -601,6 +627,121 @@ namespace FlowSim
 
             UpdateChartsTab();
             UpdateDataTab();
+        }
+
+        /// <summary>
+        /// 在"汇流水文"选项卡中绘制三段流量过程线：支流1出口、支流2出口、以及叠加后的干流入口。
+        /// </summary>
+        private void UpdateJunctionChart()
+        {
+            if (_solver1 == null || !_solver1.Solved) return;
+            if (_solver2 == null || !_solver2.Solved) return;
+            if (_solver  == null || !_solver.Solved)  return;
+
+            plotJunction.Plot.Clear();
+            _chJunction = ReAddCrosshair(plotJunction);
+
+            int    nk1 = _solver1.TimeLevel + 1;
+            int    nk2 = _solver2.TimeLevel + 1;
+            int    nk  = _solver.TimeLevel  + 1;
+            double dt  = _solver1.TimeStep;
+
+            int    nn1 = _solver1.NumberOfNodes;
+            int    nn2 = _solver2.NumberOfNodes;
+
+            int nMin = Math.Min(Math.Min(nk1, nk2), nk);
+            double[] times    = new double[nMin];
+            double[] q1Out    = new double[nMin];
+            double[] q2Out    = new double[nMin];
+            double[] qCombined = new double[nMin];
+
+            for (int k = 0; k < nMin; k++)
+            {
+                times[k]     = k * dt / 3600.0;
+                q1Out[k]     = _solver1.Flow![k, nn1 - 1];
+                q2Out[k]     = _solver2.Flow![k, nn2 - 1];
+                qCombined[k] = q1Out[k] + q2Out[k];
+            }
+
+            var s1 = plotJunction.Plot.AddScatter(times, q1Out, label: "支流1出口");
+            s1.Color = Color.DodgerBlue; s1.MarkerSize = 0; s1.LineWidth = 1.5f;
+
+            var s2 = plotJunction.Plot.AddScatter(times, q2Out, label: "支流2出口");
+            s2.Color = Color.LimeGreen; s2.MarkerSize = 0; s2.LineWidth = 1.5f;
+
+            var sc = plotJunction.Plot.AddScatter(times, qCombined, label: "汇口入流（干流上游）");
+            sc.Color = Color.Crimson; sc.MarkerSize = 0; sc.LineWidth = 2;
+
+            plotJunction.Plot.XLabel("时间（h）");
+            plotJunction.Plot.YLabel("流量（m³/s）");
+            plotJunction.Plot.Title("汇口流量过程线（支流1 + 支流2 → 干流）");
+            plotJunction.Plot.Legend();
+            plotJunction.Refresh();
+        }
+
+        /// <summary>
+        /// 填充支流1或支流2的结果选项卡（流量过程线 + 峰值水面纵剖面）。
+        /// </summary>
+        private void UpdateTributaryResults(
+            Solver?   solver,
+            string    label,
+            FormsPlot fpFlow,
+            FormsPlot fpProfile,
+            ref ScottPlot.Plottable.Crosshair? chFlow,
+            ref ScottPlot.Plottable.Crosshair? chProfile)
+        {
+            if (solver == null || !solver.Solved) return;
+
+            int    nk = solver.TimeLevel + 1;
+            int    nn = solver.NumberOfNodes;
+            double dt = solver.TimeStep;
+            double[] distance = solver.Channel.ChAtNode!;
+
+            // 流量过程线
+            fpFlow.Plot.Clear();
+            chFlow = ReAddCrosshair(fpFlow);
+            double[] times = new double[nk];
+            for (int k = 0; k < nk; k++) times[k] = k * dt / 3600.0;
+
+            int[]    plotNodes  = { 0, nn / 2, nn - 1 };
+            string[] nodeLabels = { "上游", "中部", "下游" };
+            var colors = new[] { Color.Blue, Color.Green, Color.Red };
+            for (int n = 0; n < plotNodes.Length; n++)
+            {
+                int ni = plotNodes[n];
+                double[] qs = new double[nk];
+                for (int k = 0; k < nk; k++) qs[k] = solver.Flow![k, ni];
+                var scatter = fpFlow.Plot.AddScatter(times, qs, label: nodeLabels[n]);
+                scatter.Color = colors[n]; scatter.MarkerSize = 0;
+            }
+            fpFlow.Plot.XLabel("时间（h）");
+            fpFlow.Plot.YLabel("流量（m³/s）");
+            fpFlow.Plot.Title($"{label}流量过程线");
+            fpFlow.Plot.Legend();
+            fpFlow.Refresh();
+
+            // 峰值水面纵剖面
+            fpProfile.Plot.Clear();
+            chProfile = ReAddCrosshair(fpProfile);
+            int peakTimeIndex = 0;
+            double peakQ = 0;
+            for (int k = 0; k < nk; k++)
+                if (solver.Flow![k, 0] > peakQ) { peakQ = solver.Flow[k, 0]; peakTimeIndex = k; }
+
+            double[] bed    = solver.BedProfile!;
+            double[] levels = new double[nn];
+            for (int i = 0; i < nn; i++) levels[i] = solver.Level![peakTimeIndex, i];
+            var distKm = Array.ConvertAll(distance, d => d / 1000.0);
+
+            var wlScatter  = fpProfile.Plot.AddScatter(distKm, levels, label: "峰值水位");
+            wlScatter.Color = Color.Blue; wlScatter.MarkerSize = 0;
+            var bedScatter = fpProfile.Plot.AddScatter(distKm, bed, label: "床底高程");
+            bedScatter.Color = Color.SaddleBrown; bedScatter.MarkerSize = 0;
+            fpProfile.Plot.XLabel("距离（km）");
+            fpProfile.Plot.YLabel("高程（m）");
+            fpProfile.Plot.Title($"{label}峰值水面纵剖面");
+            fpProfile.Plot.Legend();
+            fpProfile.Refresh();
         }
 
         private void UpdateChartsTab()
