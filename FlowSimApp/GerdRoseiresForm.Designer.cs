@@ -198,11 +198,14 @@ namespace FlowSim
             tabResults.TabPages.Add(tabFlow);
             tabResults.TabPages.Add(tabProfile);
 
-            // 初始空白提示
-            plotFlow.Plot.Title("请先运行仿真");
-            plotProfile.Plot.Title("请先运行仿真");
-            plotFlow.Refresh();
-            plotProfile.Refresh();
+            // 初始空白提示（设计器不执行 ScottPlot 调用）
+            if (!DesignMode)
+            {
+                plotFlow.Plot.Title("请先运行仿真");
+                plotProfile.Plot.Title("请先运行仿真");
+                plotFlow.Refresh();
+                plotProfile.Refresh();
+            }
 
             ResumeLayout();
         }
