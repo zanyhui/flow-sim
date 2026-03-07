@@ -21,14 +21,25 @@ namespace FlowSim
     /// </summary>
     public partial class MainForm : Form
     {
-        /// <summary>当前仿真求解器实例（仿真前为 null）。</summary>
+        /// <summary>当前仿真求解器实例（仿真前为 null）；支流汇流模式下指向干流求解器。</summary>
         private Solver? _solver;
 
-        /// <summary>断面_测点.csv 解析结果：断面名称 → (起点距[], 高程[]) 测点数组映射。</summary>
+        /// <summary>支流汇流模式下的汇流求解器（含三段子求解器）。</summary>
+        private JunctionSolver? _junctionSolver;
+
+        /// <summary>断面_测点.csv 解析结果：断面名称 → (起点距[], 高程[]) 测点数组映射（单河道模式）。</summary>
         private System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>? _xsMeasPts;
 
-        /// <summary>断面_索引.csv 解析结果：按起点里程升序排列。含可选平面坐标 (x, y)。</summary>
+        /// <summary>断面_索引.csv 解析结果：按起点里程升序排列。含可选平面坐标 (x, y)（单河道模式）。</summary>
         private System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)>? _xsIndex;
+
+        // ── 支流汇流模式：三个河道的 CSV 数据 ──
+        private System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>? _xsMeasPts1;
+        private System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)>? _xsIndex1;
+        private System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>? _xsMeasPts2;
+        private System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)>? _xsIndex2;
+        private System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>? _xsMeasPts3;
+        private System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)>? _xsIndex3;
 
         /// <summary>图表鼠标悬停十字准线（每个 FormsPlot 各一个）。</summary>
         private ScottPlot.Plottable.Crosshair? _chFlow, _chProfile, _chLong, _chXs, _chXsPreview;
@@ -121,77 +132,122 @@ namespace FlowSim
         /// <summary>
         /// "运行仿真"按钮点击事件处理器。
         /// <para>
-        /// 步骤：
-        /// 1. 禁用按钮（防止重复点击）；
-        /// 2. 调用 <see cref="BuildSolver"/> 根据界面参数构造求解器；
-        /// 3. 在后台任务（Task.Run）中执行仿真（避免冻结 UI 线程）；
-        /// 4. 仿真结束后切回 UI 线程更新结果图表和统计汇总。
+        /// 单河道模式：调用 <see cref="BuildSolver"/> 构造求解器，后台运行并更新结果。<br/>
+        /// 支流汇流模式：调用 <see cref="BuildJunctionSolver"/> 构造三段求解器，
+        ///   顺序运行支流1→支流2→干流，完成后以干流求解器更新结果界面。
         /// </para>
         /// </summary>
         private void btnRun_Click(object sender, EventArgs e)
         {
-            btnRun.Enabled  = false;   // 仿真期间禁止再次点击
+            btnRun.Enabled  = false;
             btnSave.Enabled = false;
             txtLog.Clear();
             Log("正在构建仿真...");
 
+            bool isConflMode = cmbXsType.SelectedIndex == 2;
+
             try
             {
-                var solver = BuildSolver();   // 根据 UI 参数构造求解器
-                _solver = solver;
-
-                // 计算进度日志频率：每 ~5% 输出一次（至少每步输出一次）
-                int totalSteps = solver.NumberOfTimeLevels - 1;
-                int logInterval = Math.Max(1, totalSteps / 20);
-
-                // 进度回调：在后台线程记录计算时长，通过 Invoke 更新日志
-                solver.StepCallback = (step, total, stepMs, totalSec) =>
+                if (isConflMode)
                 {
-                    if (step % logInterval == 0 || step == total)
+                    // ── 支流汇流模式 ──
+                    var jSolver = BuildJunctionSolver();
+                    _junctionSolver = jSolver;
+
+                    int totalSteps = (int)((double)numSimTime.Value * 3600 / (double)numTimeStep.Value);
+                    int logInterval = Math.Max(1, totalSteps / 20);
+                    double timeStep = (double)numTimeStep.Value;
+
+                    jSolver.LogCallback = msg => Invoke(() => Log(msg));
+                    jSolver.StepCallback = (step, total, stepMs, totalSec) =>
                     {
-                        double pct     = total > 0 ? (double)step / total * 100.0 : 100.0;
-                        double simHrs  = step * solver.TimeStep / 3600.0;
-                        string msg     = $"[{pct,5:F1}%] 步骤 {step}/{total}，" +
-                                         $"模拟时刻 {simHrs:F1} h，" +
-                                         $"步时 {stepMs:F1} ms，累计 {totalSec:F2} s";
-                        Log(msg);
-                    }
-                };
+                        if (step % logInterval == 0 || step == total)
+                        {
+                            double pct    = total > 0 ? (double)step / total * 100.0 : 100.0;
+                            double simHrs = step * timeStep / 3600.0;
+                            string msg    = $"  [{pct,5:F1}%] 步骤 {step}/{total}，" +
+                                            $"模拟时刻 {simHrs:F1} h，步时 {stepMs:F1} ms";
+                            Invoke(() => Log(msg));
+                        }
+                    };
 
-                // Lax-Friedrichs：注册 CFL 警告回调，将超限警告输出到日志
-                if (solver is LaxSolver lax)
-                    lax.CflWarningCallback = msg => Log(msg);
-
-                Log($"正在运行仿真（{totalSteps} 步）...");
-                // 在后台线程运行仿真，保持 UI 响应
-                Task.Run(() =>
+                    Log($"正在运行支流汇流仿真（3段，每段约 {totalSteps} 步）…");
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            jSolver.Run(verbose: 0);
+                            Invoke(() =>
+                            {
+                                _solver = jSolver.MainSolver;
+                                Log($"汇流仿真成功完成，干流模拟时长 {_solver!.TotalSimDuration / 3600.0:F1} h。");
+                                UpdateResults();
+                                btnSave.Enabled = true;
+                                btnRun.Enabled  = true;
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            Invoke(() =>
+                            {
+                                Log($"错误：{ex.Message}");
+                                btnRun.Enabled = true;
+                            });
+                        }
+                    });
+                }
+                else
                 {
-                    try
+                    // ── 单河道模式（原有逻辑）──
+                    var solver = BuildSolver();
+                    _solver = solver;
+
+                    int totalSteps = solver.NumberOfTimeLevels - 1;
+                    int logInterval = Math.Max(1, totalSteps / 20);
+
+                    solver.StepCallback = (step, total, stepMs, totalSec) =>
                     {
-                        _solver.Run(verbose: 0);   // verbose=0 避免 Console 输出过多
-                        // 仿真完成后回到 UI 线程更新界面
-                        Invoke(() =>
+                        if (step % logInterval == 0 || step == total)
                         {
-                            Log($"仿真成功完成，模拟时长 {_solver.TotalSimDuration / 3600.0:F1} h。");
-                            UpdateResults();
-                            btnSave.Enabled = true;
-                            btnRun.Enabled  = true;
-                        });
-                    }
-                    catch (Exception ex)
+                            double pct    = total > 0 ? (double)step / total * 100.0 : 100.0;
+                            double simHrs = step * solver.TimeStep / 3600.0;
+                            string msg    = $"[{pct,5:F1}%] 步骤 {step}/{total}，" +
+                                            $"模拟时刻 {simHrs:F1} h，" +
+                                            $"步时 {stepMs:F1} ms，累计 {totalSec:F2} s";
+                            Log(msg);
+                        }
+                    };
+
+                    if (solver is LaxSolver lax)
+                        lax.CflWarningCallback = msg => Log(msg);
+
+                    Log($"正在运行仿真（{totalSteps} 步）...");
+                    Task.Run(() =>
                     {
-                        // 仿真过程中出现异常（如 CFL 条件违反）
-                        Invoke(() =>
+                        try
                         {
-                            Log($"错误：{ex.Message}");
-                            btnRun.Enabled = true;
-                        });
-                    }
-                });
+                            _solver.Run(verbose: 0);
+                            Invoke(() =>
+                            {
+                                Log($"仿真成功完成，模拟时长 {_solver.TotalSimDuration / 3600.0:F1} h。");
+                                UpdateResults();
+                                btnSave.Enabled = true;
+                                btnRun.Enabled  = true;
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            Invoke(() =>
+                            {
+                                Log($"错误：{ex.Message}");
+                                btnRun.Enabled = true;
+                            });
+                        }
+                    });
+                }
             }
             catch (Exception ex)
             {
-                // 求解器初始化失败（如参数无效）
                 Log($"初始化错误：{ex.Message}");
                 btnRun.Enabled = true;
             }
@@ -375,6 +431,188 @@ namespace FlowSim
             }
         }
 
+        // ══════════════════════════════════════════════════════════════
+        // CSV 解析辅助方法（供单河道和汇流模式复用）
+        // ══════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// 解析断面_测点 CSV 文件，返回 断面名→(起点距[], 高程[]) 字典。
+        /// 文件格式：首行可选标题；每行为 断面名称, 起点距, 高程。
+        /// </summary>
+        private System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>
+            ParseXsPtsFile(string path)
+        {
+            var raw = new System.Collections.Generic.Dictionary<
+                string,
+                (System.Collections.Generic.List<double> x,
+                 System.Collections.Generic.List<double> z)>(StringComparer.OrdinalIgnoreCase);
+
+            bool skipHeader = true;
+            foreach (var line in System.IO.File.ReadAllLines(path))
+            {
+                if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("#")) continue;
+                var parts = line.Split(',');
+                if (parts.Length < 3) continue;
+                if (skipHeader)
+                {
+                    skipHeader = false;
+                    if (!double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out _))
+                        continue;
+                }
+                string name = parts[0].Trim();
+                if (!double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double px)) continue;
+                if (!double.TryParse(parts[2].Trim(), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double pz)) continue;
+                if (!raw.ContainsKey(name))
+                    raw[name] = (new System.Collections.Generic.List<double>(),
+                                 new System.Collections.Generic.List<double>());
+                raw[name].x.Add(px);
+                raw[name].z.Add(pz);
+            }
+
+            foreach (var kvp in raw)
+                if (kvp.Value.x.Count < 3)
+                    throw new InvalidOperationException(
+                        $"断面「{kvp.Key}」测点不足（至少需要 3 个点，当前 {kvp.Value.x.Count} 个）。");
+            if (raw.Count == 0)
+                throw new InvalidOperationException("未解析到任何断面测点数据。");
+
+            var result = new System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in raw)
+                result[kvp.Key] = (kvp.Value.x.ToArray(), kvp.Value.z.ToArray());
+            return result;
+        }
+
+        /// <summary>
+        /// 解析断面_索引 CSV 文件，返回按桩号升序排列的索引记录列表。
+        /// 支持基本格式（名称, 里程, n, 备注）和扩展格式（名称, 里程, n, x, y, 备注）。
+        /// </summary>
+        private System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)>
+            ParseXsIdxFile(string path)
+        {
+            var idx = new System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)>();
+            bool skipHeader = true;
+            foreach (var line in System.IO.File.ReadAllLines(path))
+            {
+                if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("#")) continue;
+                var parts = line.Split(',');
+                if (parts.Length < 3) continue;
+                if (skipHeader)
+                {
+                    skipHeader = false;
+                    if (!double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out _))
+                        continue;
+                }
+                string name = parts[0].Trim();
+                if (!double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double ch)) continue;
+                if (!double.TryParse(parts[2].Trim(), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double nVal)) continue;
+                double? xCoord = null, yCoord = null;
+                string remark;
+                if (parts.Length >= 5 &&
+                    double.TryParse(parts[3].Trim(), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double ipx) &&
+                    double.TryParse(parts[4].Trim(), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double ipy))
+                {
+                    xCoord = ipx; yCoord = ipy;
+                    remark = parts.Length > 5 ? parts[5].Trim() : string.Empty;
+                }
+                else
+                    remark = parts.Length > 3 ? parts[3].Trim() : string.Empty;
+                idx.Add((name, ch, nVal, xCoord, yCoord, remark));
+            }
+            if (idx.Count < 2)
+                throw new InvalidOperationException("断面索引记录不足（至少需要 2 条记录）。");
+            idx.Sort((a, b) => a.chainage.CompareTo(b.chainage));
+            return idx;
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        // 支流汇流模式：六个 CSV 加载按钮的事件处理器
+        // ══════════════════════════════════════════════════════════════
+
+        private void btnLoadXsPts1_Click(object sender, EventArgs e) =>
+            LoadConfluencePts(ref _xsMeasPts1, lblXsPtsFile1, "支流1");
+
+        private void btnLoadXsPts2_Click(object sender, EventArgs e) =>
+            LoadConfluencePts(ref _xsMeasPts2, lblXsPtsFile2, "支流2");
+
+        private void btnLoadXsPts3_Click(object sender, EventArgs e) =>
+            LoadConfluencePts(ref _xsMeasPts3, lblXsPtsFile3, "干流");
+
+        private void btnLoadXsIdx1_Click(object sender, EventArgs e) =>
+            LoadConfluenceIdx(ref _xsIndex1, lblXsIdxFile1, "支流1");
+
+        private void btnLoadXsIdx2_Click(object sender, EventArgs e) =>
+            LoadConfluenceIdx(ref _xsIndex2, lblXsIdxFile2, "支流2");
+
+        private void btnLoadXsIdx3_Click(object sender, EventArgs e) =>
+            LoadConfluenceIdx(ref _xsIndex3, lblXsIdxFile3, "干流");
+
+        /// <summary>支流汇流模式测点 CSV 加载通用实现。</summary>
+        private void LoadConfluencePts(
+            ref System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>? target,
+            Label lblFile,
+            string channelLabel)
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title  = $"选择{channelLabel}断面_测点 CSV 文件",
+                Filter = "CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*"
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+            try
+            {
+                var pts = ParseXsPtsFile(dlg.FileName);
+                int totalPts = 0;
+                foreach (var kvp in pts) totalPts += kvp.Value.x.Length;
+                target = pts;
+                lblFile.Text = System.IO.Path.GetFileName(dlg.FileName);
+                Log($"[{channelLabel}] 已加载测点文件（{pts.Count} 个断面，共 {totalPts} 个测点）");
+                DrawChannelLayout();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"加载{channelLabel}测点 CSV 失败：{ex.Message}", "错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        /// <summary>支流汇流模式索引 CSV 加载通用实现。</summary>
+        private void LoadConfluenceIdx(
+            ref System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)>? target,
+            Label lblFile,
+            string channelLabel)
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title  = $"选择{channelLabel}断面_索引 CSV 文件",
+                Filter = "CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*"
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+            try
+            {
+                var idx = ParseXsIdxFile(dlg.FileName);
+                int coordCount = idx.Count(r => r.x.HasValue);
+                string coordInfo = coordCount > 0 ? $"，{coordCount} 个断面含坐标" : "";
+                target = idx;
+                lblFile.Text = System.IO.Path.GetFileName(dlg.FileName);
+                Log($"[{channelLabel}] 已加载索引文件（{idx.Count} 条记录{coordInfo}）");
+                DrawChannelLayout();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"加载{channelLabel}索引 CSV 失败：{ex.Message}", "错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
         /// <summary>
         /// 当断面_测点或断面_索引 CSV 任一文件加载成功后，刷新"预览断面"下拉框。
         /// 若两个文件均已加载，按断面_索引顺序填充所有断面名称并启用下拉框；
@@ -454,65 +692,110 @@ namespace FlowSim
         }
 
         /// <summary>
-        /// 绘制河道平面布置图（不规则断面模式且断面索引含 x,y 坐标时可用）。
+        /// 绘制河道平面布置图。
         /// <para>
-        /// 图中显示两类要素：
-        /// <list type="bullet">
-        ///   <item><description>蓝色折线：中心线，按桩号顺序连接各断面的平面坐标 (x, y)；</description></item>
-        ///   <item><description>棕色短线：各断面的垂向连线，以中心线切线方向的法向量确定方向，
-        ///       长度取对应断面测点数据的起点距范围（即实测断面宽度），未加载测点时取平均断面间距的 40%。</description></item>
-        /// </list>
-        /// 算法：在每个断面坐标点处，用中心差分（端点用单侧差分）计算局部切线，
-        /// 将切线旋转 90° 得到法向量，沿法向量两侧延伸 halfWidth 绘制断面线。
+        /// 单河道模式（梯形或不规则断面）：绘制一条中心线 + 各断面垂向短线。<br/>
+        /// 支流汇流模式：绘制支流1（蓝）、支流2（绿）、干流（红）三条中心线和各自的断面线；
+        /// 汇口处（两支流末端 = 干流首端）以大圆点标注。
         /// </para>
         /// </summary>
         private void DrawChannelLayout()
         {
             plotChannelLayout.Plot.Clear();
+            bool isConf = cmbXsType.SelectedIndex == 2;
 
-            if (_xsIndex == null)
+            if (isConf)
             {
-                plotChannelLayout.Plot.Title("河道平面布置图（未加载断面索引文件）");
-                plotChannelLayout.Refresh();
-                return;
+                // ── 支流汇流模式：绘制三个河道 ──
+                bool anyDrawn = false;
+
+                anyDrawn |= DrawSingleChannelOnLayout("支流1", Color.DodgerBlue,
+                    _xsIndex1, _xsMeasPts1, firstLabel: true);
+                anyDrawn |= DrawSingleChannelOnLayout("支流2", Color.LimeGreen,
+                    _xsIndex2, _xsMeasPts2, firstLabel: true);
+                anyDrawn |= DrawSingleChannelOnLayout("干流",  Color.Crimson,
+                    _xsIndex3, _xsMeasPts3, firstLabel: true);
+
+                // 汇口标注（如果支流1/2和干流的首/末端有坐标则在汇口画大点）
+                TryMarkJunction();
+
+                if (!anyDrawn)
+                {
+                    plotChannelLayout.Plot.Title("河道平面布置图（请加载支流和干流断面文件）");
+                    plotChannelLayout.Refresh();
+                    return;
+                }
+            }
+            else
+            {
+                // ── 单河道模式 ──
+                if (_xsIndex == null)
+                {
+                    plotChannelLayout.Plot.Title("河道平面布置图（未加载断面索引文件）");
+                    plotChannelLayout.Refresh();
+                    return;
+                }
+                bool drawn = DrawSingleChannelOnLayout("中心线", Color.DodgerBlue,
+                    _xsIndex, _xsMeasPts, firstLabel: true);
+                if (!drawn)
+                {
+                    plotChannelLayout.Plot.Title("河道平面布置图（需要 ≥ 2 个断面含坐标 x,y）");
+                    plotChannelLayout.Refresh();
+                    return;
+                }
             }
 
-            // 筛选含平面坐标的断面，按桩号升序
-            var coordSecs = new System.Collections.Generic.List<(string name, double chainage, double n, double x, double y)>();
-            foreach (var rec in _xsIndex)
+            plotChannelLayout.Plot.XLabel("X（m）");
+            plotChannelLayout.Plot.YLabel("Y（m）");
+            plotChannelLayout.Plot.Title("河道平面布置图");
+            plotChannelLayout.Plot.Legend();
+            plotChannelLayout.Plot.AxisAuto();
+            plotChannelLayout.Refresh();
+        }
+
+        /// <summary>
+        /// 在平面布置图上绘制单条河道的中心线和断面线。
+        /// </summary>
+        /// <returns>true 如果至少绘制了中心线（>=2 个坐标点），否则 false。</returns>
+        private bool DrawSingleChannelOnLayout(
+            string channelLabel,
+            Color  channelColor,
+            System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)>? xsIndex,
+            System.Collections.Generic.Dictionary<string, (double[] x, double[] z)>? xsMeasPts,
+            bool firstLabel)
+        {
+            if (xsIndex == null) return false;
+
+            // 筛选含平面坐标的断面
+            var coordSecs = new System.Collections.Generic.List<(string name, double x, double y)>();
+            foreach (var rec in xsIndex)
                 if (rec.x.HasValue && rec.y.HasValue)
-                    coordSecs.Add((rec.name, rec.chainage, rec.n, rec.x.Value, rec.y.Value));
+                    coordSecs.Add((rec.name, rec.x.Value, rec.y.Value));
 
-            if (coordSecs.Count < 2)
-            {
-                plotChannelLayout.Plot.Title("河道平面布置图（需要 ≥ 2 个断面含坐标 x,y）");
-                plotChannelLayout.Refresh();
-                return;
-            }
+            if (coordSecs.Count < 2) return false;
 
             int n = coordSecs.Count;
             double[] clX = new double[n];
             double[] clY = new double[n];
             for (int i = 0; i < n; i++) { clX[i] = coordSecs[i].x; clY[i] = coordSecs[i].y; }
 
-            // ---- 绘制中心线（蓝色折线）----
-            var centerLine = plotChannelLayout.Plot.AddScatter(clX, clY, label: "中心线");
-            centerLine.Color      = Color.DodgerBlue;
-            centerLine.LineWidth  = 2;
-            centerLine.MarkerSize = 6;
-            centerLine.MarkerShape = ScottPlot.MarkerShape.filledCircle;
+            // 中心线
+            var cl = plotChannelLayout.Plot.AddScatter(clX, clY, label: channelLabel);
+            cl.Color      = channelColor;
+            cl.LineWidth  = 2;
+            cl.MarkerSize = 5;
+            cl.MarkerShape = ScottPlot.MarkerShape.filledCircle;
 
-            // ---- 计算备用半宽（平均断面间距 × 0.4）----
+            // 计算备用半宽
             double totalLen = 0;
             for (int i = 1; i < n; i++)
                 totalLen += Math.Sqrt(Math.Pow(clX[i] - clX[i - 1], 2) + Math.Pow(clY[i] - clY[i - 1], 2));
             double defaultHalfWidth = totalLen / (n - 1) * 0.4;
 
-            // ---- 绘制各断面垂向连线（棕色短线）+ 断面名称文字 ----
-            bool firstLabel = true;
+            // 断面线 + 断面名称标注
+            bool isFirstStub = firstLabel;
             for (int i = 0; i < n; i++)
             {
-                // 局部切线方向（中心差分；端点单侧差分）
                 double tx, ty;
                 if (i == 0)
                 { tx = clX[1] - clX[0]; ty = clY[1] - clY[0]; }
@@ -524,43 +807,69 @@ namespace FlowSim
                 double tLen = Math.Sqrt(tx * tx + ty * ty);
                 if (tLen < 1e-12) { tx = 1; ty = 0; } else { tx /= tLen; ty /= tLen; }
 
-                // 法向量（切线逆时针旋转 90°）
                 double normX = -ty, normY = tx;
 
-                // 断面半宽：优先从测点数据取实测断面宽度的一半
                 double halfWidth = defaultHalfWidth;
-                if (_xsMeasPts != null && _xsMeasPts.TryGetValue(coordSecs[i].name, out var pts))
+                if (xsMeasPts != null && xsMeasPts.TryGetValue(coordSecs[i].name, out var pts))
                 {
                     double measWidth = pts.x.Length > 1 ? pts.x.Max() - pts.x.Min() : 0;
                     if (measWidth > 0) halfWidth = measWidth * 0.5;
                 }
 
-                // 断面线端点
                 double[] xsXArr = { clX[i] + halfWidth * normX, clX[i] - halfWidth * normX };
                 double[] xsYArr = { clY[i] + halfWidth * normY, clY[i] - halfWidth * normY };
 
-                string? lineLabel = firstLabel ? "断面线" : null;
-                firstLabel = false;
-                var xsLine = plotChannelLayout.Plot.AddScatter(xsXArr, xsYArr, label: lineLabel);
-                xsLine.Color     = Color.SaddleBrown;
-                xsLine.LineWidth = 1.5f;
-                xsLine.MarkerSize = 0;
+                string? lineLabel = isFirstStub ? $"{channelLabel}断面" : null;
+                isFirstStub = false;
+                var stub = plotChannelLayout.Plot.AddScatter(xsXArr, xsYArr, label: lineLabel);
+                stub.Color     = channelColor;
+                stub.LineWidth = 1.5f;
+                stub.MarkerSize = 0;
+                stub.LineStyle = ScottPlot.LineStyle.Solid;
 
-                // 断面名称标注（显示在左端点旁）
                 var txt = plotChannelLayout.Plot.AddText(
                     coordSecs[i].name,
                     clX[i] + halfWidth * normX * 1.15,
                     clY[i] + halfWidth * normY * 1.15);
-                txt.FontSize = 8;
-                txt.Color    = Color.DimGray;
+                txt.FontSize = 7;
+                txt.Color    = channelColor;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 汇流模式下，若支流1、支流2末端坐标与干流首端坐标重合（或均存在），
+        /// 在汇口处绘制一个醒目的紫色圆点标注"汇口"。
+        /// </summary>
+        private void TryMarkJunction()
+        {
+            double? jx = null, jy = null;
+
+            // 取支流1末端坐标（若有）
+            if (_xsIndex1 != null)
+            {
+                var last = _xsIndex1[_xsIndex1.Count - 1];
+                if (last.x.HasValue && last.y.HasValue) { jx = last.x; jy = last.y; }
+            }
+            // 若支流1无坐标，用干流首端坐标
+            if (jx == null && _xsIndex3 != null)
+            {
+                var first = _xsIndex3[0];
+                if (first.x.HasValue && first.y.HasValue) { jx = first.x; jy = first.y; }
             }
 
-            plotChannelLayout.Plot.XLabel("X（m）");
-            plotChannelLayout.Plot.YLabel("Y（m）");
-            plotChannelLayout.Plot.Title("河道平面布置图");
-            plotChannelLayout.Plot.Legend();
-            plotChannelLayout.Plot.AxisAuto();
-            plotChannelLayout.Refresh();
+            if (jx == null || jy == null) return;
+
+            var jPt = plotChannelLayout.Plot.AddScatter(
+                new[] { jx.Value }, new[] { jy.Value }, label: "汇口");
+            jPt.Color      = Color.DarkViolet;
+            jPt.MarkerSize = 12;
+            jPt.LineWidth  = 0;
+            jPt.MarkerShape = ScottPlot.MarkerShape.filledCircle;
+
+            var jTxt = plotChannelLayout.Plot.AddText("汇口", jx.Value + 50, jy.Value + 50);
+            jTxt.FontSize = 9;
+            jTxt.Color    = Color.DarkViolet;
         }
 
         /// <summary>
@@ -765,7 +1074,134 @@ namespace FlowSim
         }
 
         /// <summary>
-        /// 构造三角形洪水过程线（升涨段 + 退水段 + 基流段）。
+        /// 构造支流汇流求解器：支流1 + 支流2 + 干流（顺序非耦合法）。
+        /// <para>
+        /// 前两段各自独立求解（支流1/2 使用各自的三角形洪水过程线上游边界）；
+        /// 然后将两支流出口流量叠加，作为干流的上游入流过程线；最后求解干流。
+        /// 三段共用相同的求解器格式、时间步长、空间步长和模拟时长参数。
+        /// </para>
+        /// </summary>
+        private JunctionSolver BuildJunctionSolver()
+        {
+            if (_xsMeasPts1 == null || _xsIndex1 == null ||
+                _xsMeasPts2 == null || _xsIndex2 == null ||
+                _xsMeasPts3 == null || _xsIndex3 == null)
+                throw new InvalidOperationException(
+                    "支流汇流模式须先加载三组断面数据（支流1、支流2、干流的测点和索引 CSV）。");
+
+            double initialFlow1 = (double)numInitialFlow.Value;
+            // 支流2 初始流量：取与支流1相同（均为汇流模式下共享的初始流量设定）
+            double initialFlow2 = (double)numInitialFlow.Value;
+            double dsDepth      = (double)numDsDepth.Value;
+            double timeStep     = (double)numTimeStep.Value;
+            double spatialStep  = (double)numSpatialStep.Value;
+            double simTime      = (double)numSimTime.Value * 3600;
+
+            BoundaryConditionType dsBcType = cmbDsBcType.SelectedIndex == 1
+                ? BoundaryConditionType.FixedDepth
+                : BoundaryConditionType.NormalDepth;
+
+            // ── 辅助函数：根据索引+测点构造不规则断面 Channel ──
+            Channel BuildIrregularChannel(
+                System.Collections.Generic.List<(string name, double chainage, double n, double? x, double? y, string remark)> xsIdx,
+                System.Collections.Generic.Dictionary<string, (double[] x, double[] z)> xsPts,
+                Boundary usBc,
+                Boundary dsBc,
+                double initFlow,
+                string label)
+            {
+                double chLength = xsIdx[xsIdx.Count - 1].chainage;
+                double usBedLv  = xsPts.TryGetValue(xsIdx[0].name, out var fPts) ? fPts.z.Min() : 0;
+                double dsBedLv  = xsPts.TryGetValue(xsIdx[xsIdx.Count - 1].name, out var lPts) ? lPts.z.Min() : 0;
+
+                // Rebuild boundaries with correct chainage and bed level
+                var usB = new Boundary(usBc.Condition, 0, usBedLv, null, null, usBc.Hydrograph);
+                var dsB = new Boundary(dsBc.Condition, chLength, dsBedLv, dsDepth);
+
+                var ch = new Channel(usB, dsB, initFlow, initMethod: InitializationMethod.GVFEquation);
+
+                var chainageList = new System.Collections.Generic.List<double>();
+                var sectionList  = new System.Collections.Generic.List<CrossSection>();
+                var coordXs = new System.Collections.Generic.List<double>();
+                var coordYs = new System.Collections.Generic.List<double>();
+                var coordChs = new System.Collections.Generic.List<double>();
+
+                foreach (var rec in xsIdx)
+                {
+                    if (!xsPts.TryGetValue(rec.name, out var pts))
+                    {
+                        Log($"[{label}] 警告：断面「{rec.name}」在测点文件中未找到，已跳过。");
+                        continue;
+                    }
+                    chainageList.Add(rec.chainage);
+                    sectionList.Add(new IrregularSection(pts.x, pts.z, rec.n));
+                    if (rec.x.HasValue && rec.y.HasValue)
+                    {
+                        coordXs.Add(rec.x.Value); coordYs.Add(rec.y.Value); coordChs.Add(rec.chainage);
+                    }
+                }
+
+                if (chainageList.Count < 2)
+                    throw new InvalidOperationException(
+                        $"[{label}] 有效不规则断面不足（至少需要 2 个）。");
+
+                ch.SetCrossSection(chainageList.ToArray(), sectionList.ToArray());
+
+                if (coordChs.Count >= 2)
+                {
+                    int nc = coordChs.Count;
+                    double[,] coords = new double[nc, 2];
+                    for (int ci = 0; ci < nc; ci++) { coords[ci, 0] = coordXs[ci]; coords[ci, 1] = coordYs[ci]; }
+                    ch.SetCoords(coords, coordChs.ToArray());
+                }
+                return ch;
+            }
+
+            // ── 辅助函数：根据 Channel 构造求解器 ──
+            Solver MakeSolver(Channel ch, Hydrograph? usHydroOverride = null)
+            {
+                string solverType = cmbSolverMethod.SelectedItem?.ToString() ?? "Preissmann";
+                if (solverType == "Lax-Friedrichs")
+                    return new LaxSolver(ch, timeStep, spatialStep, simTime);
+                double theta     = (double)numTheta.Value;
+                double tolerance = (double)numTolerance.Value;
+                int    maxIter   = (int)numMaxIter.Value;
+                return new PreissmannSolver(ch, theta, timeStep, spatialStep, simTime)
+                    { Tolerance = tolerance, MaxIterations = maxIter };
+            }
+
+            // ── 支流1 ──
+            var hydro1 = BuildTriangularHydrograph(
+                (double)numPeakFlow.Value,
+                (double)numRiseTime.Value * 3600,
+                simTime);
+            var usB1   = new Boundary(BoundaryConditionType.FlowHydrograph, 0, 0, null, null, hydro1);
+            var dsB1   = new Boundary(BoundaryConditionType.NormalDepth, 0, 0, dsDepth);   // placeholder; replaced inside
+            var ch1    = BuildIrregularChannel(_xsIndex1, _xsMeasPts1, usB1, dsB1, initialFlow1, "支流1");
+            var s1     = MakeSolver(ch1);
+
+            // ── 支流2 ──
+            var hydro2 = BuildTriangularHydrograph(
+                (double)numPeakFlow2.Value,
+                (double)numRiseTime2.Value * 3600,
+                simTime);
+            var usB2   = new Boundary(BoundaryConditionType.FlowHydrograph, 0, 0, null, null, hydro2);
+            var dsB2   = new Boundary(BoundaryConditionType.NormalDepth, 0, 0, dsDepth);
+            var ch2    = BuildIrregularChannel(_xsIndex2, _xsMeasPts2, usB2, dsB2, initialFlow2, "支流2");
+            var s2     = MakeSolver(ch2);
+
+            // ── 干流工厂（接受汇合后的过程线，返回干流求解器）──
+            Solver MainFactory(Hydrograph combinedHydro)
+            {
+                var usBMain = new Boundary(BoundaryConditionType.FlowHydrograph, 0, 0, null, null, combinedHydro);
+                var dsBMain = new Boundary(dsBcType, 0, 0, dsDepth);
+                double initFlowMain = initialFlow1 + initialFlow2;
+                var chMain = BuildIrregularChannel(_xsIndex3, _xsMeasPts3, usBMain, dsBMain, initFlowMain, "干流");
+                return MakeSolver(chMain);
+            }
+
+            return new JunctionSolver(s1, s2, MainFactory);
+        }
         /// <para>
         /// 过程线形状：
         /// - [0, riseTime]：从基流 (baseFlow = 10% peakFlow) 线性上升至 peakFlow；

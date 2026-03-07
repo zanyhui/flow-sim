@@ -42,7 +42,7 @@ namespace FlowSim
         {
             components = new System.ComponentModel.Container();
 
-            // 主选项卡控件及六个选项页
+            // 主选项卡控件及七个选项页
             this.tabControl  = new TabControl();
             this.tabChannel  = new TabPage("河道设置");
             this.tabBoundary = new TabPage("边界条件");
@@ -68,6 +68,16 @@ namespace FlowSim
             // 不规则断面预览控件
             this.cmbXsPreview   = new ComboBox();   // 断面名称选择下拉框
             this.plotXsPreview  = new FormsPlot();  // 断面形状预览图
+            // 支流汇流模式控件（3 组 CSV 加载按钮：支流1 / 支流2 / 干流）
+            this.pnlConfluence    = new Panel();
+            this.btnLoadXsPts1   = new Button();  this.lblXsPtsFile1 = new Label();
+            this.btnLoadXsIdx1   = new Button();  this.lblXsIdxFile1 = new Label();
+            this.btnLoadXsPts2   = new Button();  this.lblXsPtsFile2 = new Label();
+            this.btnLoadXsIdx2   = new Button();  this.lblXsIdxFile2 = new Label();
+            this.btnLoadXsPts3   = new Button();  this.lblXsPtsFile3 = new Label();
+            this.btnLoadXsIdx3   = new Button();  this.lblXsIdxFile3 = new Label();
+            this.numPeakFlow2    = new NumericUpDown();  // 支流2 峰值流量
+            this.numRiseTime2    = new NumericUpDown();  // 支流2 起涨时间
 
             // ---- 边界条件选项卡控件 ----
             this.cmbUsBcType = new ComboBox();           // 上游边界类型下拉框
@@ -169,20 +179,25 @@ namespace FlowSim
             AddRow(pnlChannel, "下游床底高程（m）：", numDsBedLevel);
 
             // 断面类型选择
-            cmbXsType.Items.AddRange(new[] { "梯形断面", "不规则断面" });
+            cmbXsType.Items.AddRange(new[] { "梯形断面", "不规则断面", "支流汇流（2支流→干流）" });
             cmbXsType.SelectedIndex = 0;
             cmbXsType.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbXsType.Dock = DockStyle.Fill;
             cmbXsType.SelectedIndexChanged += (s, e) =>
             {
-                bool isIrr = cmbXsType.SelectedIndex == 1;
+                int mode = cmbXsType.SelectedIndex;
+                bool isIrr  = mode == 1;
+                bool isConf = mode == 2;
+                bool isTrap = mode == 0;
                 // 不规则断面模式：启用 CSV 加载按钮，禁用梯形参数（由断面数据自动提供）
                 btnLoadXsPts.Enabled = btnLoadXsIdx.Enabled = isIrr;
-                numWidth.Enabled      = !isIrr;
-                numRoughness.Enabled  = !isIrr;
-                numUsBedLevel.Enabled = !isIrr;
-                numDsBedLevel.Enabled = !isIrr;
-                numLength.Enabled     = !isIrr;
+                numWidth.Enabled      = isTrap;
+                numRoughness.Enabled  = isTrap;
+                numUsBedLevel.Enabled = isTrap;
+                numDsBedLevel.Enabled = isTrap;
+                numLength.Enabled     = isTrap;
+                // 支流汇流模式：显示汇流 CSV 面板
+                pnlConfluence.Visible = isConf;
             };
 
             // 断面_测点 CSV 加载行：按钮 + 文件名标签
@@ -214,6 +229,70 @@ namespace FlowSim
             AddRow2(pnlChannel, "断面类型：",      cmbXsType);
             AddRow2(pnlChannel, "断面_测点 CSV：", pnlCsvPts);
             AddRow2(pnlChannel, "断面_索引 CSV：", pnlCsvIdx);
+
+            // ===== 支流汇流模式：三组 CSV 加载面板（初始隐藏）=====
+            // 构造辅助函数：创建一个 [按钮 + 文件名标签] 行面板
+            Panel MakeCsvRow(Button btn, string btnText, Label lbl, EventHandler clickHandler)
+            {
+                var row = new Panel { Dock = DockStyle.Fill, Height = 28 };
+                btn.Text     = btnText;
+                btn.Location = new System.Drawing.Point(0, 2);
+                btn.Size     = new System.Drawing.Size(90, 24);
+                btn.Click   += clickHandler;
+                lbl.Text     = "(未选择)";
+                lbl.Location = new System.Drawing.Point(96, 5);
+                lbl.AutoSize = true;
+                row.Controls.Add(btn);
+                row.Controls.Add(lbl);
+                return row;
+            }
+
+            // 支流1 子面板
+            var grpT1 = new GroupBox { Text = "支流1 断面数据", Dock = DockStyle.Top, Height = 75, Padding = new System.Windows.Forms.Padding(5) };
+            var flpT1 = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = false };
+            flpT1.Controls.Add(MakeCsvRow(btnLoadXsPts1, "加载测点…", lblXsPtsFile1, btnLoadXsPts1_Click));
+            flpT1.Controls.Add(MakeCsvRow(btnLoadXsIdx1, "加载索引…", lblXsIdxFile1, btnLoadXsIdx1_Click));
+            grpT1.Controls.Add(flpT1);
+
+            // 支流2 子面板（含峰值流量/起涨时间参数）
+            var grpT2 = new GroupBox { Text = "支流2 断面数据", Dock = DockStyle.Top, Height = 75, Padding = new System.Windows.Forms.Padding(5) };
+            var flpT2 = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = false };
+            flpT2.Controls.Add(MakeCsvRow(btnLoadXsPts2, "加载测点…", lblXsPtsFile2, btnLoadXsPts2_Click));
+            flpT2.Controls.Add(MakeCsvRow(btnLoadXsIdx2, "加载索引…", lblXsIdxFile2, btnLoadXsIdx2_Click));
+            grpT2.Controls.Add(flpT2);
+
+            // 支流2 边界参数（峰值流量 + 起涨时间）
+            var grpT2BC = new GroupBox { Text = "支流2 入流参数", Dock = DockStyle.Top, Height = 75, Padding = new System.Windows.Forms.Padding(5) };
+            var tblT2BC = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2 };
+            tblT2BC.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+            tblT2BC.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+            ConfigNum(numPeakFlow2, 500, 0, 1000000, 0, 100);
+            ConfigNum(numRiseTime2, 2,   0.1m, 100, 1, 1m);
+            tblT2BC.Controls.Add(new Label { Text = "峰值流量（m³/s）：", AutoSize = true, Anchor = AnchorStyles.Left });
+            tblT2BC.Controls.Add(numPeakFlow2);
+            tblT2BC.Controls.Add(new Label { Text = "起涨时间（小时）：", AutoSize = true, Anchor = AnchorStyles.Left });
+            tblT2BC.Controls.Add(numRiseTime2);
+            grpT2BC.Controls.Add(tblT2BC);
+
+            // 干流 子面板
+            var grpMC = new GroupBox { Text = "干流 断面数据", Dock = DockStyle.Top, Height = 75, Padding = new System.Windows.Forms.Padding(5) };
+            var flpMC = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = false };
+            flpMC.Controls.Add(MakeCsvRow(btnLoadXsPts3, "加载测点…", lblXsPtsFile3, btnLoadXsPts3_Click));
+            flpMC.Controls.Add(MakeCsvRow(btnLoadXsIdx3, "加载索引…", lblXsIdxFile3, btnLoadXsIdx3_Click));
+            grpMC.Controls.Add(flpMC);
+
+            // 组装汇流面板（自顶向下排列）
+            pnlConfluence.Dock    = DockStyle.Fill;
+            pnlConfluence.Visible = false;
+            pnlConfluence.AutoScroll = true;
+            // 注意：Controls.Add 顺序与 DockStyle.Top 堆叠顺序相反（后加的在上方）
+            pnlConfluence.Controls.Add(grpMC);    // 干流（底部）
+            pnlConfluence.Controls.Add(grpT2BC);  // 支流2 入流参数
+            pnlConfluence.Controls.Add(grpT2);    // 支流2 CSV
+            pnlConfluence.Controls.Add(grpT1);    // 支流1 CSV（顶部）
+            // 跨两列加入汇流面板
+            pnlChannel.SetColumnSpan(pnlConfluence, 2);
+            pnlChannel.Controls.Add(pnlConfluence);
 
             // 断面预览行：断面选择下拉框 + 预览图
             cmbXsPreview.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -676,6 +755,14 @@ namespace FlowSim
         // 不规则断面预览控件
         private ComboBox  cmbXsPreview;   // 断面名称选择下拉框
         private FormsPlot plotXsPreview;  // 断面形状预览图
+        // 支流汇流模式控件
+        private Panel pnlConfluence;                 // 汇流 CSV 面板（仅汇流模式显示）
+        private Button btnLoadXsPts1, btnLoadXsPts2, btnLoadXsPts3;   // 测点 CSV 按钮（支1/支2/干）
+        private Label  lblXsPtsFile1, lblXsPtsFile2, lblXsPtsFile3;   // 测点文件名标签
+        private Button btnLoadXsIdx1, btnLoadXsIdx2, btnLoadXsIdx3;   // 索引 CSV 按钮
+        private Label  lblXsIdxFile1, lblXsIdxFile2, lblXsIdxFile3;   // 索引文件名标签
+        private NumericUpDown numPeakFlow2;  // 支流2 峰值流量（m³/s）
+        private NumericUpDown numRiseTime2;  // 支流2 起涨时间（h）
         // 集总调蓄库控件
         private CheckBox chkLumpedStorage;
         private NumericUpDown numLsYMin, numLsYMax, numLsSurfaceArea;
