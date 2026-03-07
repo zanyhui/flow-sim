@@ -128,9 +128,10 @@ namespace FlowSim
             this.plotChannelLayout = new FormsPlot();    // 河道平面布置图
 
             // ---- 底部固定面板控件 ----
-            this.btnRun  = new Button();                 // "运行仿真"按钮
-            this.btnSave = new Button();                 // "保存结果"按钮
-            this.txtLog  = new TextBox();                // 日志文本框
+            this.btnRun          = new Button();                 // "运行仿真"按钮
+            this.btnSave         = new Button();                 // "保存结果"按钮
+            this.btnGerdRoseires = new Button();                 // "GERD-Roseires 案例"按钮
+            this.txtLog          = new TextBox();                // 日志文本框
 
             this.SuspendLayout();   // 暂停布局计算，提升初始化性能
 
@@ -685,6 +686,15 @@ namespace FlowSim
             btnSave.Enabled   = false;
             btnSave.FlatStyle = FlatStyle.Flat;
 
+            // "GERD-Roseires 案例"按钮（打开专用窗体）
+            btnGerdRoseires.Text      = "🏞 GERD-Roseires 案例";
+            btnGerdRoseires.Size      = new System.Drawing.Size(180, 35);
+            btnGerdRoseires.Location  = new System.Drawing.Point(330, 5);
+            btnGerdRoseires.Click    += btnGerdRoseires_Click;
+            btnGerdRoseires.BackColor = System.Drawing.Color.FromArgb(0, 153, 76);
+            btnGerdRoseires.ForeColor = System.Drawing.Color.White;
+            btnGerdRoseires.FlatStyle = FlatStyle.Flat;
+
             // 日志文本框（黑色背景、绿色字体，模拟终端风格）
             txtLog.Multiline    = true;
             txtLog.ScrollBars   = ScrollBars.Vertical;
@@ -699,6 +709,7 @@ namespace FlowSim
             var pnlBottom = new Panel { Dock = DockStyle.Bottom, Height = 135 };
             pnlBottom.Controls.Add(btnRun);
             pnlBottom.Controls.Add(btnSave);
+            pnlBottom.Controls.Add(btnGerdRoseires);
             pnlBottom.Controls.Add(txtLog);
 
             // ===== 主窗体设置 =====
@@ -744,7 +755,7 @@ namespace FlowSim
         private FormsPlot plotFlow, plotProfile;
         private DataGridView gridSummary;
         private DataGridView gridCfl;
-        private Button btnRun, btnSave;
+        private Button btnRun, btnSave, btnGerdRoseires;
         private TextBox txtLog;
         // 不规则断面控件
         private ComboBox cmbXsType;

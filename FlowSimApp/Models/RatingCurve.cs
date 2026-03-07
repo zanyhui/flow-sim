@@ -76,7 +76,7 @@ namespace FlowSim.Models
         /// <param name="stage">水位（m）。</param>
         /// <param name="time">时间（秒），预留给时变曲线（当前未使用）。</param>
         /// <returns>对应流量 Q（m³/s）。</returns>
-        public double Discharge(double stage, double time = 0)
+        public virtual double Discharge(double stage, double time = 0)
         {
             if (!Defined) throw new InvalidOperationException("Rating curve is undefined.");
             if (_function != null) return _function(stage);   // 优先使用自定义函数
@@ -96,7 +96,7 @@ namespace FlowSim.Models
         /// <param name="stage">水位（m）。</param>
         /// <param name="time">时间（秒，预留）。</param>
         /// <returns>dQ/dZ 的值。</returns>
-        public double DQ_Dz(double stage, double time = 0)
+        public virtual double DQ_Dz(double stage, double time = 0)
         {
             if (!Defined) throw new InvalidOperationException("Rating curve is undefined.");
             if (_derivative != null) return _derivative(stage);

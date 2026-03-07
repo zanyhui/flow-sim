@@ -54,6 +54,15 @@ namespace FlowSim
         }
 
         /// <summary>
+        /// 打开 GERD-Roseires 水库联合调度仿真窗体。
+        /// </summary>
+        private void btnGerdRoseires_Click(object sender, EventArgs e)
+        {
+            var form = new GerdRoseiresForm();
+            form.Show(this);
+        }
+
+        /// <summary>
         /// 为四个图表控件各添加一个 ScottPlot 十字准线，并绑定鼠标事件。
         /// 鼠标悬停时十字准线随光标移动，在坐标轴边缘显示当前 X/Y 数值标注；
         /// 鼠标离开后隐藏十字准线。
