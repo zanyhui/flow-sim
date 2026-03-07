@@ -139,6 +139,27 @@ namespace FlowSim
         }
 
         /// <summary>
+        /// 根据当前断面类型模式与已加载数据更新"运行仿真"按钮的可用状态。
+        /// <list type="bullet">
+        ///   <item>梯形断面：始终可用。</item>
+        ///   <item>不规则断面：须同时加载测点和索引 CSV。</item>
+        ///   <item>支流汇流：须加载全部三组（支流1、支流2、干流）测点和索引 CSV，共 6 个文件。</item>
+        /// </list>
+        /// </summary>
+        private void UpdateRunButton()
+        {
+            int xsTypeIndex = cmbXsType.SelectedIndex;
+            btnRun.Enabled = xsTypeIndex switch
+            {
+                1 => _xsMeasPts != null && _xsIndex != null,
+                2 => _xsMeasPts1 != null && _xsIndex1 != null &&
+                     _xsMeasPts2 != null && _xsIndex2 != null &&
+                     _xsMeasPts3 != null && _xsIndex3 != null,
+                _ => true   // 梯形断面：无需 CSV
+            };
+        }
+
+        /// <summary>
         /// "运行仿真"按钮点击事件处理器。
         /// <para>
         /// 单河道模式：调用 <see cref="BuildSolver"/> 构造求解器，后台运行并更新结果。<br/>
@@ -352,6 +373,7 @@ namespace FlowSim
                 lblXsPtsFile.Text = System.IO.Path.GetFileName(dlg.FileName);
                 Log($"已加载断面测点文件：{dlg.FileName}（{_xsMeasPts.Count} 个断面，共 {totalPts} 个测点）");
                 RefreshXsPreviewDropdown();
+                UpdateRunButton();
             }
             catch (Exception ex)
             {
@@ -432,6 +454,7 @@ namespace FlowSim
                 lblXsIdxFile.Text = System.IO.Path.GetFileName(dlg.FileName);
                 Log($"已加载断面索引文件：{dlg.FileName}（{_xsIndex.Count} 条记录{coordInfo}）");
                 RefreshXsPreviewDropdown();
+                UpdateRunButton();
             }
             catch (Exception ex)
             {
@@ -585,6 +608,7 @@ namespace FlowSim
                 lblFile.Text = System.IO.Path.GetFileName(dlg.FileName);
                 Log($"[{channelLabel}] 已加载测点文件（{pts.Count} 个断面，共 {totalPts} 个测点）");
                 DrawChannelLayout();
+                UpdateRunButton();
             }
             catch (Exception ex)
             {
@@ -614,6 +638,7 @@ namespace FlowSim
                 lblFile.Text = System.IO.Path.GetFileName(dlg.FileName);
                 Log($"[{channelLabel}] 已加载索引文件（{idx.Count} 条记录{coordInfo}）");
                 DrawChannelLayout();
+                UpdateRunButton();
             }
             catch (Exception ex)
             {

@@ -199,6 +199,7 @@ namespace FlowSim
                 numLength.Enabled     = isTrap;
                 // 支流汇流模式：显示汇流 CSV 面板
                 pnlConfluence.Visible = isConf;
+                UpdateRunButton();
             };
 
             // 断面_测点 CSV 加载行：按钮 + 文件名标签
