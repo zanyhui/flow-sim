@@ -767,10 +767,10 @@ namespace FlowSim
                     return;
                 }
 
-                // 用矩形断面（mMain=0）近似计算正常水深
+                // 用矩形断面（bMain=width, mMain=0 即垂直边坡）近似计算正常水深
                 var xs = new FlowSim.Models.TrapezoidalSection(width, 0, dsBed, n, slope);
                 double hn = xs.NormalDepth(q);
-                hn = Math.Max(hn, 0.01);
+                hn = Math.Max(hn, 0.01);   // 与 numDsDepth 控件最小值 0.01 m 保持一致，防止计算结果为 0
 
                 numDsDepth.Value = (decimal)Math.Round(hn, 2);
                 Log($"正常水深估算：Q={q:F0} m³/s，B={width:F0} m，n={n}，S₀={slope:G3} → h_n = {hn:F2} m");
