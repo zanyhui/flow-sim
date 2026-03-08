@@ -99,6 +99,7 @@ namespace FlowSim
             this.plotProfile = new FormsPlot();          // 水面纵剖面图表
             this.gridSummary = new DataGridView();       // 统计汇总表格
             this.gridCfl     = new DataGridView();       // CFL 条件查看表格
+            this.cmbFlowNode = new ComboBox();           // 流量过程线断面选择
 
             // ---- 图表选项卡控件 ----
             this.plotLongProfile = new FormsPlot();      // 纵断面水位-时间图
@@ -389,9 +390,23 @@ namespace FlowSim
                 Orientation = System.Windows.Forms.Orientation.Vertical   // 左右分割
             };
 
-            plotFlow.Dock    = DockStyle.Fill;   // 左侧：流量过程线
+            // 流量过程线面板：顶部控制条（断面选择）+ 下方图表
+            var pnlFlowCtrl = new Panel { Dock = DockStyle.Top, Height = 34, Padding = new System.Windows.Forms.Padding(5, 6, 5, 0) };
+            var lblFlowNode = new Label { Text = "断面：", Location = new System.Drawing.Point(5, 10), AutoSize = true };
+            cmbFlowNode.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbFlowNode.Location      = new System.Drawing.Point(52, 6);
+            cmbFlowNode.Size          = new System.Drawing.Size(220, 24);
+            cmbFlowNode.Enabled       = false;
+            cmbFlowNode.SelectedIndexChanged += cmbFlowNode_SelectedIndexChanged;
+            pnlFlowCtrl.Controls.Add(lblFlowNode);
+            pnlFlowCtrl.Controls.Add(cmbFlowNode);
+            var pnlFlowWrap = new Panel { Dock = DockStyle.Fill };
+            plotFlow.Dock = DockStyle.Fill;
+            pnlFlowWrap.Controls.Add(plotFlow);      // Fill 先加
+            pnlFlowWrap.Controls.Add(pnlFlowCtrl);   // Top 后加
+
             plotProfile.Dock = DockStyle.Fill;   // 右侧：水面纵剖面
-            splitPlots.Panel1.Controls.Add(plotFlow);
+            splitPlots.Panel1.Controls.Add(pnlFlowWrap);
             splitPlots.Panel2.Controls.Add(plotProfile);
 
             // 统计汇总表格配置：两列（参数名 + 数值），只读
@@ -711,6 +726,8 @@ namespace FlowSim
         private TrackBar trkLongTime, trkXsTime;
         private Label lblLongTime, lblXsTime;
         private ComboBox cmbXsNode;
+        // 流量过程线断面选择下拉框
+        private ComboBox cmbFlowNode;
         // 数据选项卡控件
         private TrackBar trkDataTime;
         private Label lblDataTime;

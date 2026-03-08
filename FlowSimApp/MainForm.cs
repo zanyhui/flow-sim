@@ -951,29 +951,18 @@ namespace FlowSim
             double dt = _solver.TimeStep;
             double[] distance = _solver.Channel.ChAtNode!;
 
-            // ---- 绘制上游/中部/下游流量过程线（Q-t 曲线）----
-            plotFlow.Plot.Clear();
-            _chFlow = ReAddCrosshair(plotFlow);   // Plot.Clear() 移除了十字准线，需重新加入
-            double[] times = new double[nk];
-            for (int k = 0; k < nk; k++) times[k] = k * dt / 3600.0;  // 秒转小时
+            // ---- 填充断面选择下拉框（暂停事件以避免重入）----
+            cmbFlowNode.SelectedIndexChanged -= cmbFlowNode_SelectedIndexChanged;
+            cmbFlowNode.Items.Clear();
+            cmbFlowNode.Items.Add("全部代表节点");
+            for (int i = 0; i < nn; i++)
+                cmbFlowNode.Items.Add($"节点 {i}（{distance[i] / 1000.0:F1} km）");
+            cmbFlowNode.Enabled      = true;
+            cmbFlowNode.SelectedIndex = 0;
+            cmbFlowNode.SelectedIndexChanged += cmbFlowNode_SelectedIndexChanged;
 
-            int[] plotNodes    = { 0, nn / 2, nn - 1 };                     // 三个代表节点
-            string[] nodeLabels = { "上游", "中部", "下游" };
-            var colors = new[] { Color.Blue, Color.Green, Color.Red };
-            for (int n = 0; n < plotNodes.Length; n++)
-            {
-                int ni = plotNodes[n];
-                double[] qs = new double[nk];
-                for (int k = 0; k < nk; k++) qs[k] = _solver.Flow![k, ni];
-                var scatter = plotFlow.Plot.AddScatter(times, qs, label: nodeLabels[n]);
-                scatter.Color      = colors[n];
-                scatter.MarkerSize = 0;  // 不绘制散点符号，仅显示曲线
-            }
-            plotFlow.Plot.XLabel("时间（h）");
-            plotFlow.Plot.YLabel("流量（m³/s）");
-            plotFlow.Plot.Title("流量过程线");
-            plotFlow.Plot.Legend();
-            plotFlow.Refresh();
+            // ---- 绘制流量过程线 ----
+            DrawFlowChart();
 
             // ---- 绘制峰值时刻水面纵剖面（Z-x 曲线）----
             plotProfile.Plot.Clear();
@@ -1061,6 +1050,65 @@ namespace FlowSim
             UpdateChartsTab();
             UpdateDataTab();
         }
+
+        /// <summary>
+        /// 根据 <see cref="cmbFlowNode"/> 当前选项绘制流量过程线图表。
+        /// 选项 0（"全部代表节点"）时显示上游/中部/下游三条曲线；
+        /// 其余选项对应特定节点，仅绘制该节点的流量过程线。
+        /// </summary>
+        private void DrawFlowChart()
+        {
+            if (_solver == null || !_solver.Solved) return;
+
+            int    nk = _solver.TimeLevel + 1;
+            int    nn = _solver.NumberOfNodes;
+            double dt = _solver.TimeStep;
+
+            plotFlow.Plot.Clear();
+            _chFlow = ReAddCrosshair(plotFlow);
+
+            double[] times = new double[nk];
+            for (int k = 0; k < nk; k++) times[k] = k * dt / 3600.0;
+
+            int selectedIdx = cmbFlowNode.SelectedIndex;
+            if (selectedIdx <= 0)
+            {
+                // 全部代表节点：上游、中部、下游
+                int[]    plotNodes  = { 0, nn / 2, nn - 1 };
+                string[] nodeLabels = { "上游", "中部", "下游" };
+                var      colors     = new[] { Color.Blue, Color.Green, Color.Red };
+                for (int n = 0; n < plotNodes.Length; n++)
+                {
+                    int ni = plotNodes[n];
+                    double[] qs = new double[nk];
+                    for (int k = 0; k < nk; k++) qs[k] = _solver.Flow![k, ni];
+                    var scatter = plotFlow.Plot.AddScatter(times, qs, label: nodeLabels[n]);
+                    scatter.Color      = colors[n];
+                    scatter.MarkerSize = 0;
+                }
+                plotFlow.Plot.Title("流量过程线");
+            }
+            else
+            {
+                // 单节点：selectedIdx - 1 为节点编号（Item 0 是"全部"，Item 1 开始对应节点 0）
+                int ni = selectedIdx - 1;
+                double[] qs = new double[nk];
+                for (int k = 0; k < nk; k++) qs[k] = _solver.Flow![k, ni];
+                double[] chainages = _solver.Channel.ChAtNode!;
+                string label = $"节点 {ni}（{chainages[ni] / 1000.0:F1} km）";
+                var scatter = plotFlow.Plot.AddScatter(times, qs, label: label);
+                scatter.Color      = Color.SteelBlue;
+                scatter.MarkerSize = 0;
+                plotFlow.Plot.Title($"流量过程线 — {label}");
+            }
+
+            plotFlow.Plot.XLabel("时间（h）");
+            plotFlow.Plot.YLabel("流量（m³/s）");
+            plotFlow.Plot.Legend();
+            plotFlow.Refresh();
+        }
+
+        private void cmbFlowNode_SelectedIndexChanged(object? sender, EventArgs e) => DrawFlowChart();
 
         /// <summary>
         /// 仿真完成后初始化"图表"选项卡：设置滑块范围、填充节点下拉框并绘制初始图表。

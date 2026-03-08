@@ -290,9 +290,21 @@ namespace FlowSim
                 Dock        = DockStyle.Fill,
                 Orientation = System.Windows.Forms.Orientation.Vertical
             };
-            plotFlow.Dock    = DockStyle.Fill;
+            // 干流流量图：顶部断面选择条 + 下方图表
+            var pnlFlowCtrl = new Panel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(5, 6, 5, 0) };
+            var lblFlowNodeL = new Label { Text = "断面：", Location = new Point(5, 10), AutoSize = true };
+            cmbFlowNode.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbFlowNode.Location = new Point(52, 6); cmbFlowNode.Size = new Size(220, 24);
+            cmbFlowNode.Enabled = false; cmbFlowNode.SelectedIndexChanged += cmbFlowNode_SelectedIndexChanged;
+            pnlFlowCtrl.Controls.Add(lblFlowNodeL);
+            pnlFlowCtrl.Controls.Add(cmbFlowNode);
+            var pnlFlowWrap = new Panel { Dock = DockStyle.Fill };
+            plotFlow.Dock = DockStyle.Fill;
+            pnlFlowWrap.Controls.Add(plotFlow);
+            pnlFlowWrap.Controls.Add(pnlFlowCtrl);
+
             plotProfile.Dock = DockStyle.Fill;
-            splitResultsV.Panel1.Controls.Add(plotFlow);
+            splitResultsV.Panel1.Controls.Add(pnlFlowWrap);
             splitResultsV.Panel2.Controls.Add(plotProfile);
             splitResultsH.Panel1.Controls.Add(splitResultsV);
 
@@ -340,9 +352,19 @@ namespace FlowSim
                 Orientation      = System.Windows.Forms.Orientation.Vertical,
                 SplitterDistance = 400
             };
-            plotTrib1Flow.Dock    = DockStyle.Fill;
+            var pnlT1FlowCtrl = new Panel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(5, 6, 5, 0) };
+            var lblT1FlowNode = new Label { Text = "断面：", Location = new Point(5, 10), AutoSize = true };
+            cmbTrib1FlowNode.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbTrib1FlowNode.Location = new Point(52, 6); cmbTrib1FlowNode.Size = new Size(220, 24);
+            cmbTrib1FlowNode.Enabled = false; cmbTrib1FlowNode.SelectedIndexChanged += cmbTrib1FlowNode_SelectedIndexChanged;
+            pnlT1FlowCtrl.Controls.Add(lblT1FlowNode);
+            pnlT1FlowCtrl.Controls.Add(cmbTrib1FlowNode);
+            var pnlT1FlowWrap = new Panel { Dock = DockStyle.Fill };
+            plotTrib1Flow.Dock = DockStyle.Fill;
+            pnlT1FlowWrap.Controls.Add(plotTrib1Flow);
+            pnlT1FlowWrap.Controls.Add(pnlT1FlowCtrl);
             plotTrib1Profile.Dock = DockStyle.Fill;
-            splitTrib1.Panel1.Controls.Add(plotTrib1Flow);
+            splitTrib1.Panel1.Controls.Add(pnlT1FlowWrap);
             splitTrib1.Panel2.Controls.Add(plotTrib1Profile);
             tabPageTrib1.Controls.Add(splitTrib1);
 
@@ -353,9 +375,19 @@ namespace FlowSim
                 Orientation      = System.Windows.Forms.Orientation.Vertical,
                 SplitterDistance = 400
             };
-            plotTrib2Flow.Dock    = DockStyle.Fill;
+            var pnlT2FlowCtrl = new Panel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(5, 6, 5, 0) };
+            var lblT2FlowNode = new Label { Text = "断面：", Location = new Point(5, 10), AutoSize = true };
+            cmbTrib2FlowNode.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbTrib2FlowNode.Location = new Point(52, 6); cmbTrib2FlowNode.Size = new Size(220, 24);
+            cmbTrib2FlowNode.Enabled = false; cmbTrib2FlowNode.SelectedIndexChanged += cmbTrib2FlowNode_SelectedIndexChanged;
+            pnlT2FlowCtrl.Controls.Add(lblT2FlowNode);
+            pnlT2FlowCtrl.Controls.Add(cmbTrib2FlowNode);
+            var pnlT2FlowWrap = new Panel { Dock = DockStyle.Fill };
+            plotTrib2Flow.Dock = DockStyle.Fill;
+            pnlT2FlowWrap.Controls.Add(plotTrib2Flow);
+            pnlT2FlowWrap.Controls.Add(pnlT2FlowCtrl);
             plotTrib2Profile.Dock = DockStyle.Fill;
-            splitTrib2.Panel1.Controls.Add(plotTrib2Flow);
+            splitTrib2.Panel1.Controls.Add(pnlT2FlowWrap);
             splitTrib2.Panel2.Controls.Add(plotTrib2Profile);
             tabPageTrib2.Controls.Add(splitTrib2);
 
@@ -502,6 +534,10 @@ namespace FlowSim
         private FormsPlot    plotProfile = new FormsPlot();
         private DataGridView gridSummary = new DataGridView();
         private DataGridView gridCfl     = new DataGridView();
+        // 流量过程线断面选择下拉框
+        private ComboBox cmbFlowNode      = new ComboBox();
+        private ComboBox cmbTrib1FlowNode = new ComboBox();
+        private ComboBox cmbTrib2FlowNode = new ComboBox();
 
         // 图表 tab
         private FormsPlot plotLongProfile = new FormsPlot();

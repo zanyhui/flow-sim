@@ -343,8 +343,10 @@ namespace FlowSim
                             UpdateResults();
                             UpdateJunctionChart();
                             UpdateTributaryResults(_solver1, "支流1", plotTrib1Flow, plotTrib1Profile,
+                                cmbTrib1FlowNode, cmbTrib1FlowNode_SelectedIndexChanged,
                                 ref _chTrib1Flow, ref _chTrib1Profile);
                             UpdateTributaryResults(_solver2, "支流2", plotTrib2Flow, plotTrib2Profile,
+                                cmbTrib2FlowNode, cmbTrib2FlowNode_SelectedIndexChanged,
                                 ref _chTrib2Flow, ref _chTrib2Profile);
                             btnSave.Enabled = true;
                             btnRun.Enabled  = true;
@@ -531,29 +533,18 @@ namespace FlowSim
             double dt       = _solver.TimeStep;
             double[] distance = _solver.Channel.ChAtNode!;
 
-            // ── 流量过程线 ──
-            plotFlow.Plot.Clear();
-            _chFlow = ReAddCrosshair(plotFlow);
-            double[] times = new double[nk];
-            for (int k = 0; k < nk; k++) times[k] = k * dt / 3600.0;
+            // ── 填充断面选择下拉框 ──
+            cmbFlowNode.SelectedIndexChanged -= cmbFlowNode_SelectedIndexChanged;
+            cmbFlowNode.Items.Clear();
+            cmbFlowNode.Items.Add("全部代表节点");
+            for (int i = 0; i < nn; i++)
+                cmbFlowNode.Items.Add($"节点 {i}（{distance[i] / 1000.0:F1} km）");
+            cmbFlowNode.Enabled      = true;
+            cmbFlowNode.SelectedIndex = 0;
+            cmbFlowNode.SelectedIndexChanged += cmbFlowNode_SelectedIndexChanged;
 
-            int[]    plotNodes  = { 0, nn / 2, nn - 1 };
-            string[] nodeLabels = { "上游", "中部", "下游" };
-            var colors = new[] { Color.Blue, Color.Green, Color.Red };
-            for (int n = 0; n < plotNodes.Length; n++)
-            {
-                int ni = plotNodes[n];
-                double[] qs = new double[nk];
-                for (int k = 0; k < nk; k++) qs[k] = _solver.Flow![k, ni];
-                var scatter = plotFlow.Plot.AddScatter(times, qs, label: nodeLabels[n]);
-                scatter.Color      = colors[n];
-                scatter.MarkerSize = 0;
-            }
-            plotFlow.Plot.XLabel("时间（h）");
-            plotFlow.Plot.YLabel("流量（m³/s）");
-            plotFlow.Plot.Title("干流流量过程线");
-            plotFlow.Plot.Legend();
-            plotFlow.Refresh();
+            // ── 流量过程线 ──
+            DrawFlowChartFor(plotFlow, _solver, cmbFlowNode, ref _chFlow, "干流流量过程线");
 
             // ── 峰值水面纵剖面 ──
             plotProfile.Plot.Clear();
@@ -689,6 +680,8 @@ namespace FlowSim
             string    label,
             FormsPlot fpFlow,
             FormsPlot fpProfile,
+            ComboBox  cmbNode,
+            EventHandler nodeChangedHandler,
             ref ScottPlot.Plottable.Crosshair? chFlow,
             ref ScottPlot.Plottable.Crosshair? chProfile)
         {
@@ -696,31 +689,20 @@ namespace FlowSim
 
             int    nk = solver.TimeLevel + 1;
             int    nn = solver.NumberOfNodes;
-            double dt = solver.TimeStep;
             double[] distance = solver.Channel.ChAtNode!;
 
-            // 流量过程线
-            fpFlow.Plot.Clear();
-            chFlow = ReAddCrosshair(fpFlow);
-            double[] times = new double[nk];
-            for (int k = 0; k < nk; k++) times[k] = k * dt / 3600.0;
+            // 填充断面选择下拉框
+            cmbNode.SelectedIndexChanged -= nodeChangedHandler;
+            cmbNode.Items.Clear();
+            cmbNode.Items.Add("全部代表节点");
+            for (int i = 0; i < nn; i++)
+                cmbNode.Items.Add($"节点 {i}（{distance[i] / 1000.0:F1} km）");
+            cmbNode.Enabled      = true;
+            cmbNode.SelectedIndex = 0;
+            cmbNode.SelectedIndexChanged += nodeChangedHandler;
 
-            int[]    plotNodes  = { 0, nn / 2, nn - 1 };
-            string[] nodeLabels = { "上游", "中部", "下游" };
-            var colors = new[] { Color.Blue, Color.Green, Color.Red };
-            for (int n = 0; n < plotNodes.Length; n++)
-            {
-                int ni = plotNodes[n];
-                double[] qs = new double[nk];
-                for (int k = 0; k < nk; k++) qs[k] = solver.Flow![k, ni];
-                var scatter = fpFlow.Plot.AddScatter(times, qs, label: nodeLabels[n]);
-                scatter.Color = colors[n]; scatter.MarkerSize = 0;
-            }
-            fpFlow.Plot.XLabel("时间（h）");
-            fpFlow.Plot.YLabel("流量（m³/s）");
-            fpFlow.Plot.Title($"{label}流量过程线");
-            fpFlow.Plot.Legend();
-            fpFlow.Refresh();
+            // 流量过程线
+            DrawFlowChartFor(fpFlow, solver, cmbNode, ref chFlow, $"{label}流量过程线");
 
             // 峰值水面纵剖面
             fpProfile.Plot.Clear();
@@ -744,6 +726,79 @@ namespace FlowSim
             fpProfile.Plot.Title($"{label}峰值水面纵剖面");
             fpProfile.Plot.Legend();
             fpProfile.Refresh();
+        }
+
+        /// <summary>
+        /// 根据 <paramref name="cmbNode"/> 当前选项绘制流量过程线图表。
+        /// 选项 0（"全部代表节点"）显示上游/中部/下游三条曲线；其余选项对应单个节点。
+        /// </summary>
+        private void DrawFlowChartFor(
+            FormsPlot fpFlow,
+            Solver solver,
+            ComboBox cmbNode,
+            ref ScottPlot.Plottable.Crosshair? chFlow,
+            string baseTitle)
+        {
+            int    nk = solver.TimeLevel + 1;
+            int    nn = solver.NumberOfNodes;
+            double dt = solver.TimeStep;
+            double[] chainages = solver.Channel.ChAtNode!;
+
+            fpFlow.Plot.Clear();
+            chFlow = ReAddCrosshair(fpFlow);
+
+            double[] times = new double[nk];
+            for (int k = 0; k < nk; k++) times[k] = k * dt / 3600.0;
+
+            int selectedIdx = cmbNode.SelectedIndex;
+            if (selectedIdx <= 0)
+            {
+                int[]    plotNodes  = { 0, nn / 2, nn - 1 };
+                string[] nodeLabels = { "上游", "中部", "下游" };
+                var      colors     = new[] { Color.Blue, Color.Green, Color.Red };
+                for (int n = 0; n < plotNodes.Length; n++)
+                {
+                    int ni = plotNodes[n];
+                    double[] qs = new double[nk];
+                    for (int k = 0; k < nk; k++) qs[k] = solver.Flow![k, ni];
+                    var scatter = fpFlow.Plot.AddScatter(times, qs, label: nodeLabels[n]);
+                    scatter.Color = colors[n]; scatter.MarkerSize = 0;
+                }
+                fpFlow.Plot.Title(baseTitle);
+            }
+            else
+            {
+                int ni = selectedIdx - 1;
+                double[] qs = new double[nk];
+                for (int k = 0; k < nk; k++) qs[k] = solver.Flow![k, ni];
+                string label = $"节点 {ni}（{chainages[ni] / 1000.0:F1} km）";
+                var scatter = fpFlow.Plot.AddScatter(times, qs, label: label);
+                scatter.Color = Color.SteelBlue; scatter.MarkerSize = 0;
+                fpFlow.Plot.Title($"{baseTitle} — {label}");
+            }
+
+            fpFlow.Plot.XLabel("时间（h）");
+            fpFlow.Plot.YLabel("流量（m³/s）");
+            fpFlow.Plot.Legend();
+            fpFlow.Refresh();
+        }
+
+        private void cmbFlowNode_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (_solver == null || !_solver.Solved) return;
+            DrawFlowChartFor(plotFlow, _solver, cmbFlowNode, ref _chFlow, "干流流量过程线");
+        }
+
+        private void cmbTrib1FlowNode_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (_solver1 == null || !_solver1.Solved) return;
+            DrawFlowChartFor(plotTrib1Flow, _solver1, cmbTrib1FlowNode, ref _chTrib1Flow, "支流1流量过程线");
+        }
+
+        private void cmbTrib2FlowNode_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (_solver2 == null || !_solver2.Solved) return;
+            DrawFlowChartFor(plotTrib2Flow, _solver2, cmbTrib2FlowNode, ref _chTrib2Flow, "支流2流量过程线");
         }
 
         private void UpdateChartsTab()
