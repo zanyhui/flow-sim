@@ -208,11 +208,56 @@ namespace FlowSim.Models
             if (_coords != null && _coordsChainages != null)
                 _calcCurvature();
 
+            // 为缺少 BedSlope 的输入断面（如从 CSV 加载的不规则断面）补充河床纵坡。
+            // 必须在插值之前执行，使插值断面也能继承正确的坡度值。
+            _assignInputBedSlopes();
+
             // 生成均匀分布的节点桩号
             ChAtNode = Linspace(UpstreamBoundary.Chainage, DownstreamBoundary.Chainage, nNodes);
 
             // 对每个节点桩号进行断面插值
             _interpolateCrossSections();
+        }
+
+        /// <summary>
+        /// 为所有 <see cref="BedSlope"/> 尚未赋值的输入断面计算并填充河床纵坡。
+        /// <para>
+        /// 坡度由相邻断面的 <see cref="CrossSection.ZMin"/>（床底最低点高程）之差
+        /// 除以桩号间距得到。对末尾断面取前向差分；对首断面外的其他断面取后向差分。
+        /// 计算结果取非负值（上坡或平坡均视为 0），与曼宁公式对正常流的要求一致。
+        /// </para>
+        /// <para>
+        /// 此方法解决了不规则断面在正常水深（NormalDepth）下游边界条件下的数值故障：
+        /// 当 <see cref="BedSlope"/> 为 null 时，<see cref="Boundary.ConditionResidual"/>
+        /// 会以 S₀ = 0 代入，导致正常流量 = 0，进而使 Lax 格式下游流量始终为 0、
+        /// Preissmann 格式下游残差发散。
+        /// </para>
+        /// </summary>
+        private void _assignInputBedSlopes()
+        {
+            if (_inputXs == null || _xsChainages == null || _inputXs.Length < 2) return;
+
+            for (int i = 0; i < _inputXs.Length; i++)
+            {
+                if (_inputXs[i].BedSlope.HasValue) continue;   // 已有坡度，跳过
+
+                double dz, dx;
+                if (i < _inputXs.Length - 1)
+                {
+                    // 正向差分：从断面 i 到断面 i+1 的高程降落（下坡为正）
+                    dz = _inputXs[i].ZMin - _inputXs[i + 1].ZMin;
+                    dx = _xsChainages[i + 1] - _xsChainages[i];
+                }
+                else
+                {
+                    // 末尾断面：沿用前向差分（与倒数第二段一致）
+                    dz = _inputXs[i - 1].ZMin - _inputXs[i].ZMin;
+                    dx = _xsChainages[i] - _xsChainages[i - 1];
+                }
+
+                // 坡度不能为负（逆坡不支持正常流）；dx < 1e-9 表示相邻断面桩号几乎重合，视为 0 坡度
+                _inputXs[i].BedSlope = dx > 1e-9 ? Math.Max(0.0, dz / dx) : 0.0;
+            }
         }
 
         /// <summary>
