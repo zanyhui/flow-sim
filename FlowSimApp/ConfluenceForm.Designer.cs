@@ -162,10 +162,9 @@ namespace FlowSim
             AddRow2(tblBC, "峰值流量（m³/s）：", numPeakFlow2);
             AddRow2(tblBC, "起涨时间（小时）：", numRiseTime2);
             grpBC.Controls.Add(tblBC);
-
             // ── GroupBox：下游边界 ──
             var grpDS = new GroupBox { Text = "下游边界", AutoSize = true, Width = grpWidth, Padding = new Padding(5) };
-            var tblDS = MakeTable(2, 2);
+            var tblDS = MakeTable(3, 2);
             tblDS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
             tblDS.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
             cmbDsBcType.Items.AddRange(new[] { "正常水深", "固定水深" });
@@ -190,9 +189,19 @@ namespace FlowSim
             lblDsDepthLabel.Text    = "初始水深（m）（均匀流）：";
             lblDsDepthLabel.AutoSize = true;
             lblDsDepthLabel.Anchor   = AnchorStyles.Left | AnchorStyles.Right;
+
+            // 常驻说明标签（解释正常水深与坡度的关系，无需悬停即可看到）
+            lblDsBcInfo.Text      = "ℹ 正常水深（m）≠ 坡度。坡度由断面索引中的桩号与床底高程自动推算；正常水深是在该坡度下满足曼宁公式的均匀流水深，仿真中随流量动态变化。";
+            lblDsBcInfo.AutoSize  = true;
+            lblDsBcInfo.Dock      = DockStyle.Fill;
+            lblDsBcInfo.ForeColor = System.Drawing.Color.SteelBlue;
+            lblDsBcInfo.Font      = new System.Drawing.Font("Segoe UI", 8.25f, System.Drawing.FontStyle.Italic);
+
             AddRow2(tblDS, "下游边界类型：", cmbDsBcType);
             tblDS.Controls.Add(lblDsDepthLabel);
             tblDS.Controls.Add(numDsDepth);
+            tblDS.Controls.Add(lblDsBcInfo);
+            tblDS.SetColumnSpan(lblDsBcInfo, 2);
             grpDS.Controls.Add(tblDS);
 
             // ── GroupBox：求解器设置 ──
@@ -533,6 +542,7 @@ namespace FlowSim
         private ComboBox      cmbDsBcType = new ComboBox();
         private NumericUpDown numDsDepth  = new NumericUpDown();
         private Label         lblDsDepthLabel = new Label();  // 水深标签（随边界类型动态更新）
+        private Label         lblDsBcInfo    = new Label();   // 常驻说明（解释正常水深≠坡度）
 
         // 求解器
         private ComboBox      cmbSolverMethod = new ComboBox();

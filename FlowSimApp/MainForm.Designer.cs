@@ -77,6 +77,7 @@ namespace FlowSim
             this.numDsDepth  = new NumericUpDown();      // 下游初始/固定水深（m）
             this.lblDsDepthLabel     = new Label();      // 下游水深标签（随边界类型切换）
             this.btnSuggestNormalDepth = new Button();   // 自动估算正常水深
+            this.lblDsBcInfo         = new Label();      // 下游边界说明（常驻显示，解释正常水深非坡度）
             // 集总调蓄库控件
             this.chkLumpedStorage = new CheckBox();
             this.numLsYMin         = new NumericUpDown();
@@ -315,6 +316,15 @@ namespace FlowSim
             pnlBoundary.Controls.Add(numDsDepth);
             pnlBoundary.Controls.Add(new Label());   // 占位（左列空）
             pnlBoundary.Controls.Add(btnSuggestNormalDepth);
+
+            // 常驻说明标签（解释正常水深与坡度的关系，无需悬停即可看到）
+            lblDsBcInfo.Text      = "ℹ 正常水深（m）≠ 坡度。坡度由上/下游床底高程自动推算；正常水深是在该坡度下满足曼宁公式的均匀流水深，仿真中随流量动态变化。";
+            lblDsBcInfo.AutoSize  = true;
+            lblDsBcInfo.Dock      = DockStyle.Fill;
+            lblDsBcInfo.ForeColor = System.Drawing.Color.SteelBlue;
+            lblDsBcInfo.Font      = new System.Drawing.Font("Segoe UI", 8.25f, System.Drawing.FontStyle.Italic);
+            pnlBoundary.Controls.Add(lblDsBcInfo);
+            pnlBoundary.SetColumnSpan(lblDsBcInfo, 2);
 
             // ── 集总调蓄库（LumpedStorage）区 ──
             pnlBoundary.Controls.Add(new Label
@@ -734,6 +744,7 @@ namespace FlowSim
         private ComboBox cmbUsBcType, cmbDsBcType;
         private NumericUpDown numPeakFlow, numRiseTime, numDsDepth;
         private Label lblDsDepthLabel;           // 下游水深行标签（随边界类型动态更新）
+        private Label lblDsBcInfo;               // 下游边界类型说明（常驻，解释"正常水深≠坡度"）
         private Button btnSuggestNormalDepth;    // 自动估算正常水深按钮
         private ComboBox cmbSolverMethod;
         private NumericUpDown numTimeStep, numSpatialStep, numSimTime, numTheta;

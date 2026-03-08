@@ -714,10 +714,12 @@ namespace FlowSim
         }
 
         /// <summary>
-        /// 下游边界类型切换事件：更新水深标签文本和"自动估算"按钮可见性。
+        /// 下游边界类型切换事件：更新水深标签文本、"自动估算"按钮可见性和常驻说明文字。
         /// <para>
-        /// 正常水深（NormalDepth）：标签改为"初始水深（m）（均匀流）"，"自动估算"可用；
-        /// 固定水深（FixedDepth）：标签改为"固定水深（m）"，"自动估算"不可见。
+        /// 正常水深（NormalDepth）：标签改为"初始水深（m）（均匀流）"，"自动估算"可用，
+        ///   说明文字提示"正常水深≠坡度，坡度已由床底高程自动推算"；
+        /// 固定水深（FixedDepth）：标签改为"固定水深（m）"，"自动估算"不可见，
+        ///   说明文字提示水深全程固定。
         /// </para>
         /// </summary>
         private void cmbDsBcType_SelectedIndexChanged(object sender, EventArgs e)
@@ -727,6 +729,9 @@ namespace FlowSim
                 ? "初始水深（m）（均匀流）："
                 : "固定水深（m）：";
             btnSuggestNormalDepth.Visible = isNormal;
+            lblDsBcInfo.Text = isNormal
+                ? "ℹ 正常水深（m）≠ 坡度。坡度由上/下游床底高程自动推算；正常水深是在该坡度下满足曼宁公式的均匀流水深，仿真中随流量动态变化。"
+                : "ℹ 固定水深：出口水深在整个仿真中保持为所填数值（m），不随流量变化。";
         }
 
         /// <summary>

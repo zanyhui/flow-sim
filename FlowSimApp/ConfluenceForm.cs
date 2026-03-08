@@ -133,13 +133,21 @@ namespace FlowSim
         }
 
         /// <summary>
-        /// 下游边界类型切换事件：更新水深标签，使"初始/固定水深"语义与选项一致。
+        /// 下游边界类型切换事件：更新水深标签和常驻说明文字。
+        /// <para>
+        /// 正常水深模式：说明"正常水深（m）≠坡度"，坡度已由断面数据自动推算；<br/>
+        /// 固定水深模式：说明水深全程固定。
+        /// </para>
         /// </summary>
         private void cmbDsBcType_SelectedIndexChanged(object sender, EventArgs e)
         {
-            lblDsDepthLabel.Text = cmbDsBcType.SelectedIndex == 0
+            bool isNormal = cmbDsBcType.SelectedIndex == 0;
+            lblDsDepthLabel.Text = isNormal
                 ? "初始水深（m）（均匀流）："
                 : "固定水深（m）：";
+            lblDsBcInfo.Text = isNormal
+                ? "ℹ 正常水深（m）≠ 坡度。坡度由断面索引中的桩号与床底高程自动推算；正常水深是在该坡度下满足曼宁公式的均匀流水深，仿真中随流量动态变化。"
+                : "ℹ 固定水深：出口水深在整个仿真中保持为所填数值（m），不随流量变化。";
         }
 
 
