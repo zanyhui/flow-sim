@@ -730,7 +730,7 @@ namespace FlowSim
                 : "固定水深（m）：";
             btnSuggestNormalDepth.Visible = isNormal;
             lblDsBcInfo.Text = isNormal
-                ? "ℹ 正常水深（m）≠ 坡度。坡度由上/下游床底高程自动推算；正常水深是在该坡度下满足曼宁公式的均匀流水深，仿真中随流量动态变化。"
+                ? "ℹ 正常水深（m）≠ 坡度。坡度由上/下游床底高程自动推算；正常水深是在该坡度下满足曼宁公式的均匀流水深，仿真中随流量动态变化。\n⚠ 请勿将初始水深设为极小值（如 0.01 m）；请先点击「📐 自动估算」填入合理值，否则仿真将因流速过高而失败。"
                 : "ℹ 固定水深：出口水深在整个仿真中保持为所填数值（m），不随流量变化。";
         }
 
@@ -976,9 +976,74 @@ namespace FlowSim
                 };
                 solver = ps;
             }
+
+            // 验证初始条件：若初始流速超出物理合理范围，在开始仿真前给出明确提示
+            ValidateInitialVelocity(channel, dsInitDepth, isIrregular ? double.NaN : (usBedLevel - dsBedLevel) / length);
+
             return solver;
         }
 
+        /// <summary>
+        /// 验证河道初始条件中的最大流速是否在物理合理范围内。
+        /// <para>
+        /// 初始流速过高（通常由用户将正常水深设置为远小于均匀流深的值引起）会导致 CFL 条件
+        /// 违反（Lax 格式）或牛顿迭代不收敛（Preissmann 格式），仿真无法进行。
+        /// 若最大初始流速超过 20 m/s，抛出 <see cref="InvalidOperationException"/>，并给出建议值。
+        /// </para>
+        /// </summary>
+        /// <param name="channel">已完成 InitializeConditions 的河道。</param>
+        /// <param name="dsInitDepth">用户设置的下游初始水深（m），用于错误提示。</param>
+        /// <param name="bedSlope">河床纵坡 S₀（无量纲）；若为 NaN（不规则断面）则只做流速检查，不给出建议水深。</param>
+        private static void ValidateInitialVelocity(Channel channel, double dsInitDepth, double bedSlope)
+        {
+            const double MaxReasonableVelocity = 20.0;  // m/s — 超过此值视为初始条件不合理
+
+            var ic = channel.InitialConditions;
+            if (ic == null) return;
+
+            int nNodes = ic.GetLength(0);
+            double maxV = 0.0;
+            int    maxNode = 0;
+            for (int i = 0; i < nNodes; i++)
+            {
+                double h  = ic[i, 0];
+                double Q  = Math.Abs(ic[i, 1]);
+                double hw = channel.BedLevelAt(i) + h;
+                double A  = channel.AreaAt(i, hw);
+                if (A <= 0) continue;
+                double v = Q / A;
+                if (v > maxV) { maxV = v; maxNode = i; }
+            }
+
+            if (maxV > MaxReasonableVelocity)
+            {
+                // 构建建议信息——若坡度已知（梯形断面），估算正常水深
+                string suggestion = "";
+                if (!double.IsNaN(bedSlope) && bedSlope > 0 && channel.Width.HasValue && channel.Roughness.HasValue)
+                {
+                    try
+                    {
+                        var xs = new FlowSim.Models.TrapezoidalSection(
+                            channel.Width.Value, 0,
+                            channel.BedLevelAt(nNodes - 1),
+                            channel.Roughness.Value,
+                            bedSlope);
+                        double hn = xs.NormalDepth(channel.InitialFlowRate);
+                        suggestion = $"\n建议正常水深 ≈ {hn:F2} m。\n" +
+                                     "请使用「📐 自动估算」按钮自动填入正确初始水深，再重新运行。";
+                    }
+                    catch { /* 无法计算则不附建议 */ }
+                }
+
+                throw new InvalidOperationException(
+                    $"初始水深 {dsInitDepth:F2} m 与流量 {channel.InitialFlowRate:F0} m³/s 严重不匹配：\n" +
+                    $"  节点 {maxNode} 处初始流速 V ≈ {maxV:F0} m/s，远超物理范围。\n" +
+                    $"  这将导致 CFL 条件违反（Lax）或牛顿迭代不收敛（Preissmann）。{suggestion}");
+            }
+        }
+
+        /// <summary>
+        /// 根据峰值流量和起涨时间构造三角形洪水过程线。
         /// <para>
         /// 过程线形状：
         /// - [0, riseTime]：从基流 (baseFlow = 10% peakFlow) 线性上升至 peakFlow；

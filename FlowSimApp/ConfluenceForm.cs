@@ -146,7 +146,7 @@ namespace FlowSim
                 ? "初始水深（m）（均匀流）："
                 : "固定水深（m）：";
             lblDsBcInfo.Text = isNormal
-                ? "ℹ 正常水深（m）≠ 坡度。坡度由断面索引中的桩号与床底高程自动推算；正常水深是在该坡度下满足曼宁公式的均匀流水深，仿真中随流量动态变化。"
+                ? "ℹ 正常水深（m）≠ 坡度。坡度由断面索引中的桩号与床底高程自动推算；正常水深是在该坡度下满足曼宁公式的均匀流水深，仿真中随流量动态变化。\n⚠ 请勿将初始水深设为极小值（如 0.01 m）；请填入与流量相符的合理水深，否则仿真将因流速过高而失败。"
                 : "ℹ 固定水深：出口水深在整个仿真中保持为所填数值（m），不随流量变化。";
         }
 
@@ -493,10 +493,32 @@ namespace FlowSim
 
             Solver MakeSolver(Channel ch)
             {
+                Solver s;
                 if (capturedSolverType == "Lax-Friedrichs")
-                    return new LaxSolver(ch, timeStep, spatialStep, simTime);
-                return new PreissmannSolver(ch, capturedTheta, timeStep, spatialStep, simTime)
-                    { Tolerance = capturedTolerance, MaxIterations = capturedMaxIter };
+                    s = new LaxSolver(ch, timeStep, spatialStep, simTime);
+                else
+                    s = new PreissmannSolver(ch, capturedTheta, timeStep, spatialStep, simTime)
+                        { Tolerance = capturedTolerance, MaxIterations = capturedMaxIter };
+
+                // 验证初始流速，防止因初始水深过小导致 CFL 条件违反或迭代不收敛
+                var ic = ch.InitialConditions;
+                if (ic != null)
+                {
+                    int nn = ic.GetLength(0);
+                    for (int i = 0; i < nn; i++)
+                    {
+                        double h  = ic[i, 0];
+                        double Q  = Math.Abs(ic[i, 1]);
+                        double hw = ch.BedLevelAt(i) + h;
+                        double A  = ch.AreaAt(i, hw);
+                        if (A > 0 && Q / A > 20.0)
+                            throw new InvalidOperationException(
+                                $"初始水深 {dsDepth:F2} m 与流量 {ch.InitialFlowRate:F0} m³/s 严重不匹配：\n" +
+                                $"  节点 {i} 处初始流速 V ≈ {Q / A:F0} m/s，远超物理范围（>20 m/s）。\n" +
+                                "  请增大下游初始水深（「初始水深」输入框），再重新运行。");
+                    }
+                }
+                return s;
             }
 
             // ── 支流1 ──

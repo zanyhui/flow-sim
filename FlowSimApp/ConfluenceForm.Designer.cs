@@ -191,7 +191,7 @@ namespace FlowSim
             lblDsDepthLabel.Anchor   = AnchorStyles.Left | AnchorStyles.Right;
 
             // 常驻说明标签（解释正常水深与坡度的关系，无需悬停即可看到）
-            lblDsBcInfo.Text      = "ℹ 正常水深（m）≠ 坡度。坡度由断面索引中的桩号与床底高程自动推算；正常水深是在该坡度下满足曼宁公式的均匀流水深，仿真中随流量动态变化。";
+            lblDsBcInfo.Text      = "ℹ 正常水深（m）≠ 坡度。坡度由断面索引中的桩号与床底高程自动推算；正常水深是在该坡度下满足曼宁公式的均匀流水深，仿真中随流量动态变化。\n⚠ 请勿将初始水深设为极小值（如 0.01 m）；请填入与流量相符的合理水深，否则仿真将因流速过高而失败。";
             lblDsBcInfo.AutoSize  = true;
             lblDsBcInfo.Dock      = DockStyle.Fill;
             lblDsBcInfo.ForeColor = System.Drawing.Color.SteelBlue;
