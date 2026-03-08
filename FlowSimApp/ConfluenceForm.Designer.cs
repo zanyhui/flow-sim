@@ -172,9 +172,14 @@ namespace FlowSim
             cmbDsBcType.SelectedIndex  = 0;
             cmbDsBcType.DropDownStyle  = ComboBoxStyle.DropDownList;
             cmbDsBcType.Dock           = DockStyle.Fill;
+            cmbDsBcType.SelectedIndexChanged += cmbDsBcType_SelectedIndexChanged;
             ConfigNum(numDsDepth, 3, 0.01m, 1000, 2, 1m);
-            AddRow2(tblDS, "下游边界类型：",      cmbDsBcType);
-            AddRow2(tblDS, "初始/固定水深（m）：", numDsDepth);
+            lblDsDepthLabel.Text    = "初始水深（m）（均匀流）：";
+            lblDsDepthLabel.AutoSize = true;
+            lblDsDepthLabel.Anchor   = AnchorStyles.Left | AnchorStyles.Right;
+            AddRow2(tblDS, "下游边界类型：", cmbDsBcType);
+            tblDS.Controls.Add(lblDsDepthLabel);
+            tblDS.Controls.Add(numDsDepth);
             grpDS.Controls.Add(tblDS);
 
             // ── GroupBox：求解器设置 ──
@@ -514,6 +519,7 @@ namespace FlowSim
         // 下游边界
         private ComboBox      cmbDsBcType = new ComboBox();
         private NumericUpDown numDsDepth  = new NumericUpDown();
+        private Label         lblDsDepthLabel = new Label();  // 水深标签（随边界类型动态更新）
 
         // 求解器
         private ComboBox      cmbSolverMethod = new ComboBox();

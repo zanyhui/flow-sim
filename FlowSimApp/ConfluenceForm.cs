@@ -132,6 +132,18 @@ namespace FlowSim
                 _xsMeasPts3 != null && _xsIndex3 != null;
         }
 
+        /// <summary>
+        /// 下游边界类型切换事件：更新水深标签，使"初始/固定水深"语义与选项一致。
+        /// </summary>
+        private void cmbDsBcType_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            lblDsDepthLabel.Text = cmbDsBcType.SelectedIndex == 0
+                ? "初始水深（m）（均匀流）："
+                : "固定水深（m）：";
+        }
+
+
+
         // ══════════════════════════════════════════════════════════════
         // CSV 加载事件处理器
         // ══════════════════════════════════════════════════════════════

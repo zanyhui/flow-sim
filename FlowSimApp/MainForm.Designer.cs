@@ -75,6 +75,8 @@ namespace FlowSim
             this.numPeakFlow = new NumericUpDown();      // 峰值流量（m³/s）
             this.numRiseTime = new NumericUpDown();      // 起涨时间（小时）
             this.numDsDepth  = new NumericUpDown();      // 下游初始/固定水深（m）
+            this.lblDsDepthLabel     = new Label();      // 下游水深标签（随边界类型切换）
+            this.btnSuggestNormalDepth = new Button();   // 自动估算正常水深
             // 集总调蓄库控件
             this.chkLumpedStorage = new CheckBox();
             this.numLsYMin         = new NumericUpDown();
@@ -257,10 +259,21 @@ namespace FlowSim
             cmbDsBcType.Items.AddRange(new[] { "正常水深", "固定水深" });
             cmbDsBcType.SelectedIndex = 0;
             cmbDsBcType.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbDsBcType.SelectedIndexChanged += cmbDsBcType_SelectedIndexChanged;
 
             ConfigNum(numPeakFlow, 1000,   0,      1000000, 0,    1000);    // 峰值流量默认 1000 m³/s
             ConfigNum(numRiseTime, 2,      0.1m,   100,     1,    2);       // 起涨时间默认 2 h
             ConfigNum(numDsDepth,  3,      0.01m,  1000,    2,    3);       // 下游水深默认 3 m
+
+            // 自动估算正常水深按钮
+            btnSuggestNormalDepth.Text    = "📐 自动估算";
+            btnSuggestNormalDepth.Dock    = DockStyle.Fill;
+            btnSuggestNormalDepth.Click  += btnSuggestNormalDepth_Click;
+
+            // 下游水深标签（初始为"正常水深"语义）
+            lblDsDepthLabel.Text    = "初始水深（m）（均匀流）：";
+            lblDsDepthLabel.AutoSize = true;
+            lblDsDepthLabel.Anchor   = AnchorStyles.Left | AnchorStyles.Right;
 
             // 局部辅助函数：添加"标签 + 任意控件"行
             void AddRow2(TableLayoutPanel p, string label, Control ctrl)
@@ -280,7 +293,10 @@ namespace FlowSim
             pnlBoundary.Controls.Add(new Label { Text = "─── 下游 ───", Font = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold) });
             pnlBoundary.Controls.Add(new Label());
             AddRow2(pnlBoundary, "下游边界条件类型：",  cmbDsBcType);
-            AddRow2(pnlBoundary, "初始/固定水深（m）：", numDsDepth);
+            pnlBoundary.Controls.Add(lblDsDepthLabel);
+            pnlBoundary.Controls.Add(numDsDepth);
+            pnlBoundary.Controls.Add(new Label());   // 占位（左列空）
+            pnlBoundary.Controls.Add(btnSuggestNormalDepth);
 
             // ── 集总调蓄库（LumpedStorage）区 ──
             pnlBoundary.Controls.Add(new Label
@@ -699,6 +715,8 @@ namespace FlowSim
         private NumericUpDown numUsBedLevel, numDsBedLevel;
         private ComboBox cmbUsBcType, cmbDsBcType;
         private NumericUpDown numPeakFlow, numRiseTime, numDsDepth;
+        private Label lblDsDepthLabel;           // 下游水深行标签（随边界类型动态更新）
+        private Button btnSuggestNormalDepth;    // 自动估算正常水深按钮
         private ComboBox cmbSolverMethod;
         private NumericUpDown numTimeStep, numSpatialStep, numSimTime, numTheta;
         private NumericUpDown numTolerance, numMaxIter;

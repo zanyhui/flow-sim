@@ -714,6 +714,76 @@ namespace FlowSim
         }
 
         /// <summary>
+        /// 下游边界类型切换事件：更新水深标签文本和"自动估算"按钮可见性。
+        /// <para>
+        /// 正常水深（NormalDepth）：标签改为"初始水深（m）（均匀流）"，"自动估算"可用；
+        /// 固定水深（FixedDepth）：标签改为"固定水深（m）"，"自动估算"不可见。
+        /// </para>
+        /// </summary>
+        private void cmbDsBcType_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            bool isNormal = cmbDsBcType.SelectedIndex == 0;
+            lblDsDepthLabel.Text = isNormal
+                ? "初始水深（m）（均匀流）："
+                : "固定水深（m）：";
+            btnSuggestNormalDepth.Visible = isNormal;
+        }
+
+        /// <summary>
+        /// "自动估算正常水深"按钮点击事件。
+        /// 根据当前界面的初始流量、河道宽度、糙率和河床坡度，
+        /// 使用曼宁公式（Brent 求根法）计算下游正常水深，并填入 <see cref="numDsDepth"/>。
+        /// <para>
+        /// 正常水深（Normal Depth）是使摩阻坡度等于河床坡度的均匀流水深，
+        /// 即满足 Q = (1/n)·A·R^(2/3)·S0^(1/2) 时的水深。
+        /// 它是下游 NormalDepth 边界的最合适初始水深——既保持初始均匀流状态，
+        /// 又允许仿真过程中水深随流量变化而动态调整。
+        /// </para>
+        /// </summary>
+        private void btnSuggestNormalDepth_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                double q      = (double)numInitialFlow.Value;
+                double width  = (double)numWidth.Value;
+                double n      = (double)numRoughness.Value;
+                double usBed  = (double)numUsBedLevel.Value;
+                double dsBed  = (double)numDsBedLevel.Value;
+                double length = (double)numLength.Value;
+
+                if (length <= 0)
+                {
+                    MessageBox.Show("河道长度必须大于 0。", "提示",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                double slope = (usBed - dsBed) / length;
+                if (slope <= 0)
+                {
+                    MessageBox.Show(
+                        "河床纵坡必须大于 0 才能计算正常水深。\n" +
+                        "（需要上游床底高程 > 下游床底高程）",
+                        "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                // 用矩形断面（mMain=0）近似计算正常水深
+                var xs = new FlowSim.Models.TrapezoidalSection(width, 0, dsBed, n, slope);
+                double hn = xs.NormalDepth(q);
+                hn = Math.Max(hn, 0.01);
+
+                numDsDepth.Value = (decimal)Math.Round(hn, 2);
+                Log($"正常水深估算：Q={q:F0} m³/s，B={width:F0} m，n={n}，S₀={slope:G3} → h_n = {hn:F2} m");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"计算正常水深失败：{ex.Message}", "错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+
+        /// <summary>
         /// 根据界面控件当前值构造一维河道和求解器。
         /// <para>
         /// 构造流程：
