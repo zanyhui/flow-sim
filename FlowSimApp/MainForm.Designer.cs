@@ -270,6 +270,24 @@ namespace FlowSim
             btnSuggestNormalDepth.Dock    = DockStyle.Fill;
             btnSuggestNormalDepth.Click  += btnSuggestNormalDepth_Click;
 
+            // ToolTip：解释正常水深含义及两种边界类型的区别
+            var tipDs = new ToolTip { InitialDelay = 300, AutoPopDelay = 12000, ReshowDelay = 100 };
+            tipDs.SetToolTip(cmbDsBcType,
+                "正常水深（Normal Depth）：\n" +
+                "  出口边界以曼宁均匀流公式 Q = K·√S₀ 为约束，\n" +
+                "  水深随流量自动调整，不固定。\n" +
+                "  上方数值仅作为 t=0 时刻的初始水深使用。\n\n" +
+                "固定水深（Fixed Depth）：\n" +
+                "  整个仿真过程中下游水深保持为所填数值不变。");
+            tipDs.SetToolTip(numDsDepth,
+                "正常水深模式：此值仅用于初始化（t=0），仿真期间出口水深随流量自适应。\n" +
+                "固定水深模式：此值在整个仿真中固定不变。\n" +
+                "可点击「📐 自动估算」按钮根据曼宁公式自动填入建议正常水深。");
+            tipDs.SetToolTip(btnSuggestNormalDepth,
+                "根据曼宁公式 Q=(1/n)·A·R^(2/3)·S^(1/2)，\n" +
+                "使用当前界面参数（初始流量、宽度、糙率、河床坡降）\n" +
+                "求解正常水深并填入初始水深框。");
+
             // 下游水深标签（初始为"正常水深"语义）
             lblDsDepthLabel.Text    = "初始水深（m）（均匀流）：";
             lblDsDepthLabel.AutoSize = true;

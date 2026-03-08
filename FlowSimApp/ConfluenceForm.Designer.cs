@@ -174,6 +174,19 @@ namespace FlowSim
             cmbDsBcType.Dock           = DockStyle.Fill;
             cmbDsBcType.SelectedIndexChanged += cmbDsBcType_SelectedIndexChanged;
             ConfigNum(numDsDepth, 3, 0.01m, 1000, 2, 1m);
+
+            // ToolTip 说明
+            var tipDsCF = new ToolTip { InitialDelay = 300, AutoPopDelay = 12000, ReshowDelay = 100 };
+            tipDsCF.SetToolTip(cmbDsBcType,
+                "正常水深（Normal Depth）：\n" +
+                "  出口边界以曼宁均匀流公式 Q = K·√S₀ 为约束，\n" +
+                "  水深随流量自动调整，不固定。\n" +
+                "  上方数值仅作为 t=0 时刻的初始水深使用。\n\n" +
+                "固定水深（Fixed Depth）：\n" +
+                "  整个仿真过程中下游水深保持为所填数值不变。");
+            tipDsCF.SetToolTip(numDsDepth,
+                "正常水深模式：此值仅用于初始化（t=0），仿真期间出口水深随流量自适应。\n" +
+                "固定水深模式：此值在整个仿真中固定不变。");
             lblDsDepthLabel.Text    = "初始水深（m）（均匀流）：";
             lblDsDepthLabel.AutoSize = true;
             lblDsDepthLabel.Anchor   = AnchorStyles.Left | AnchorStyles.Right;
