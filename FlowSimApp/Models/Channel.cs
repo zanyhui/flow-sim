@@ -78,6 +78,13 @@ namespace FlowSim.Models
         public Hydrograph? LateralInflow { get; private set; }
 
         /// <summary>
+        /// 旁侧出流总流量过程线 Q_out(t)（m³/s）。
+        /// 为 null 时表示无旁侧出流。
+        /// 单位长度出流量 q_out = Q_out(t) / Length（m²/s），在净侧向流量中取负贡献。
+        /// </summary>
+        public Hydrograph? LateralOutflow { get; private set; }
+
+        /// <summary>
         /// 构造河道对象，设置上下游边界和基本参数。
         /// </summary>
         /// <param name="upstreamBoundary">上游边界条件。</param>
@@ -132,13 +139,25 @@ namespace FlowSim.Models
         /// 设置旁侧入流总流量过程线 Q_lat(t)（m³/s）。
         /// <para>
         /// 旁侧入流沿河道均匀分布，单位长度入流量 q_lat = Q_lat(t) / Length（m²/s）。
-        /// 对圣维南方程的连续性方程，<see cref="GetLateralInflowPerLength"/> 返回 q_lat；
+        /// 对圣维南方程的连续性方程，<see cref="GetNetLateralFlowPerLength"/> 返回净侧向流量；
         /// 求解器在计算连续性残差或面积更新时调用该值。
         /// </para>
         /// </summary>
         /// <param name="lateralInflow">旁侧入流总流量过程线。</param>
         public void SetLateralInflow(Hydrograph lateralInflow)
             => LateralInflow = lateralInflow;
+
+        /// <summary>
+        /// 设置旁侧出流总流量过程线 Q_out(t)（m³/s）。
+        /// <para>
+        /// 旁侧出流沿河道均匀分布，表示河道向两侧排泄水量（如灌渠引水、渗漏等）。
+        /// 单位长度出流量 q_out = Q_out(t) / Length（m²/s）；
+        /// 在净侧向流量 <see cref="GetNetLateralFlowPerLength"/> 中作负项处理。
+        /// </para>
+        /// </summary>
+        /// <param name="lateralOutflow">旁侧出流总流量过程线。</param>
+        public void SetLateralOutflow(Hydrograph lateralOutflow)
+            => LateralOutflow = lateralOutflow;
 
         /// <summary>
         /// 返回指定时刻的单位长度旁侧入流量 q_lat（m²/s）。
@@ -153,6 +172,27 @@ namespace FlowSim.Models
         {
             if (LateralInflow == null || Length < 1.0) return 0.0;
             return Math.Max(0.0, LateralInflow.GetAt(t) / Length);
+        }
+
+        /// <summary>
+        /// 返回指定时刻的单位长度净侧向流量 q_net（m²/s）。
+        /// <para>
+        /// q_net = q_in - q_out，即旁侧入流减去旁侧出流：
+        /// <list type="bullet">
+        ///   <item>正值表示净流入（增加河道流量）；</item>
+        ///   <item>负值表示净流出（减少河道流量，如灌渠引水）。</item>
+        /// </list>
+        /// 当两者均为 null 时返回 0。
+        /// </para>
+        /// </summary>
+        /// <param name="t">当前时刻（秒）。</param>
+        /// <returns>单位长度净侧向流量（m²/s），可正可负。</returns>
+        public double GetNetLateralFlowPerLength(double t)
+        {
+            if (Length < 1.0) return 0.0;
+            double qIn  = LateralInflow  != null ? Math.Max(0.0, LateralInflow.GetAt(t)  / Length) : 0.0;
+            double qOut = LateralOutflow != null ? Math.Max(0.0, LateralOutflow.GetAt(t) / Length) : 0.0;
+            return qIn - qOut;
         }
 
         /// <summary>

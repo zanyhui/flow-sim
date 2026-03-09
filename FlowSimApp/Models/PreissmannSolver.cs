@@ -336,7 +336,7 @@ namespace FlowSim.Models
 
             // 旁侧入流源项：单位长度流量 q_lat（取时步中点值）
             double tMid = (TimeLevel - 0.5) * TimeStep;
-            double qLat = Channel.GetLateralInflowPerLength(tMid);
+            double qLat = Channel.GetNetLateralFlowPerLength(tMid);
 
             return dA_dt + dQ_dx - qLat;
         }

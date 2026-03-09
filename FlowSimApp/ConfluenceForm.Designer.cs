@@ -306,6 +306,71 @@ namespace FlowSim
             numLateralPeakFlow.Enabled = false;
             numLateralRiseTime.Enabled = false;
 
+            // ── GroupBox：旁侧出流（干流） ──
+            var grpLatOut = new GroupBox { Text = "旁侧出流（干流）", AutoSize = true, Width = grpWidth, Padding = new Padding(5) };
+            var tblLatOut = MakeTable(4, 2);
+            tblLatOut.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+            tblLatOut.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+
+            chkEnableLateralOut.Text     = "启用旁侧出流";
+            chkEnableLateralOut.AutoSize = true;
+            chkEnableLateralOut.Dock     = DockStyle.Fill;
+            chkEnableLateralOut.CheckedChanged += chkEnableLateralOut_CheckedChanged;
+            ConfigNum(numLateralOutPeakFlow, 100, 1, 1000000, 0, 50);
+            ConfigNum(numLateralOutRiseTime, 3, 0.1m, 100, 1, 1m);
+
+            lblLateralOutInfo.Text      = "ℹ 旁侧出流沿干流全长均匀引出（如灌渠取水、河道渗漏等）；采用三角形过程线。";
+            lblLateralOutInfo.AutoSize  = true;
+            lblLateralOutInfo.Dock      = DockStyle.Fill;
+            lblLateralOutInfo.ForeColor = System.Drawing.Color.DarkOrange;
+            lblLateralOutInfo.Font      = new System.Drawing.Font("Segoe UI", 8.25f, System.Drawing.FontStyle.Italic);
+
+            tblLatOut.Controls.Add(chkEnableLateralOut);
+            tblLatOut.SetColumnSpan(chkEnableLateralOut, 2);
+            AddRow2(tblLatOut, "峰值出流（m³/s）：", numLateralOutPeakFlow);
+            AddRow2(tblLatOut, "起涨时间（小时）：", numLateralOutRiseTime);
+            tblLatOut.Controls.Add(lblLateralOutInfo);
+            tblLatOut.SetColumnSpan(lblLateralOutInfo, 2);
+            grpLatOut.Controls.Add(tblLatOut);
+
+            // 初始状态：旁侧出流未启用，子控件禁用
+            numLateralOutPeakFlow.Enabled = false;
+            numLateralOutRiseTime.Enabled = false;
+
+            // ── GroupBox：汇流位置（干流中游） ──
+            var grpJunction = new GroupBox { Text = "汇流位置（干流中游）", AutoSize = true, Width = grpWidth, Padding = new Padding(5) };
+            var tblJunction = MakeTable(5, 2);
+            tblJunction.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+            tblJunction.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+
+            chkEnableMidJunction.Text     = "支流汇入干流中游";
+            chkEnableMidJunction.AutoSize = true;
+            chkEnableMidJunction.Dock     = DockStyle.Fill;
+            chkEnableMidJunction.CheckedChanged += chkEnableMidJunction_CheckedChanged;
+            ConfigNum(numJunctionChainage, 10, 0.1m, 9999, 1, 1m);      // 汇流桩号（km）
+            ConfigNum(numUpMainPeakFlow,  500, 0, 1000000, 0, 100);     // 干流上游入流峰值
+            ConfigNum(numUpMainRiseTime,    2, 0.1m, 100, 1, 1m);       // 干流上游入流起涨时间
+
+            lblJunctionInfo.Text      = "ℹ 干流河道被汇流点分为上、下两段：上游段独立求解，出口流量与两支流流量在汇流点叠加后驱动下游段。";
+            lblJunctionInfo.AutoSize  = true;
+            lblJunctionInfo.Dock      = DockStyle.Fill;
+            lblJunctionInfo.ForeColor = System.Drawing.Color.SteelBlue;
+            lblJunctionInfo.Font      = new System.Drawing.Font("Segoe UI", 8.25f, System.Drawing.FontStyle.Italic);
+
+            tblJunction.Controls.Add(chkEnableMidJunction);
+            tblJunction.SetColumnSpan(chkEnableMidJunction, 2);
+            AddRow2(tblJunction, "汇流桩号（km）：",          numJunctionChainage);
+            AddRow2(tblJunction, "干流上游峰值（m³/s）：",   numUpMainPeakFlow);
+            AddRow2(tblJunction, "干流上游起涨时间（h）：",  numUpMainRiseTime);
+            tblJunction.Controls.Add(lblJunctionInfo);
+            tblJunction.SetColumnSpan(lblJunctionInfo, 2);
+            grpJunction.Controls.Add(tblJunction);
+
+            // 初始状态：中游汇流未启用，子控件禁用
+            numJunctionChainage.Enabled = false;
+            numUpMainPeakFlow.Enabled   = false;
+            numUpMainRiseTime.Enabled   = false;
+
             // 将所有左侧控件加入 leftFlow（从上到下）
             leftFlow.Controls.Add(grpT1);
             leftFlow.Controls.Add(grpT2);
@@ -313,6 +378,8 @@ namespace FlowSim
             leftFlow.Controls.Add(grpBC);
             leftFlow.Controls.Add(grpDS);
             leftFlow.Controls.Add(grpLat);
+            leftFlow.Controls.Add(grpLatOut);
+            leftFlow.Controls.Add(grpJunction);
             leftFlow.Controls.Add(grpSolver);
             leftFlow.Controls.Add(pnlButtons);
             leftFlow.Controls.Add(txtLog);
@@ -582,6 +649,19 @@ namespace FlowSim
         private NumericUpDown numLateralPeakFlow = new NumericUpDown();
         private NumericUpDown numLateralRiseTime = new NumericUpDown();
         private Label         lblLateralInfo    = new Label();
+
+        // 旁侧出流
+        private CheckBox      chkEnableLateralOut    = new CheckBox();
+        private NumericUpDown numLateralOutPeakFlow   = new NumericUpDown();
+        private NumericUpDown numLateralOutRiseTime   = new NumericUpDown();
+        private Label         lblLateralOutInfo      = new Label();
+
+        // 汇流位置（干流中游）
+        private CheckBox      chkEnableMidJunction  = new CheckBox();
+        private NumericUpDown numJunctionChainage    = new NumericUpDown();
+        private NumericUpDown numUpMainPeakFlow      = new NumericUpDown();
+        private NumericUpDown numUpMainRiseTime      = new NumericUpDown();
+        private Label         lblJunctionInfo        = new Label();
 
         // 求解器
         private ComboBox      cmbSolverMethod = new ComboBox();

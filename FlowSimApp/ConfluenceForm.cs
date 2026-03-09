@@ -160,6 +160,27 @@ namespace FlowSim
             numLateralRiseTime.Enabled = enabled;
         }
 
+        /// <summary>
+        /// 旁侧出流启用/禁用切换事件：根据复选框状态更新子控件的可用性。
+        /// </summary>
+        private void chkEnableLateralOut_CheckedChanged(object sender, EventArgs e)
+        {
+            bool enabled = chkEnableLateralOut.Checked;
+            numLateralOutPeakFlow.Enabled = enabled;
+            numLateralOutRiseTime.Enabled = enabled;
+        }
+
+        /// <summary>
+        /// 干流中游汇流启用/禁用切换事件：根据复选框状态更新子控件的可用性。
+        /// </summary>
+        private void chkEnableMidJunction_CheckedChanged(object sender, EventArgs e)
+        {
+            bool enabled = chkEnableMidJunction.Checked;
+            numJunctionChainage.Enabled = enabled;
+            numUpMainPeakFlow.Enabled   = enabled;
+            numUpMainRiseTime.Enabled   = enabled;
+        }
+
 
 
         // ══════════════════════════════════════════════════════════════
@@ -430,6 +451,9 @@ namespace FlowSim
                 throw new InvalidOperationException(
                     "须先加载三组断面数据（支流1、支流2、干流的测点和索引 CSV）。");
 
+            // 基流占峰值流量的比例（三角形过程线基流 = 峰值 × BaseFlowFraction）
+            const double BaseFlowFraction = 0.1;
+
             double initialFlow1 = (double)numInitialFlow.Value;
             double initialFlow2 = (double)numInitialFlow.Value;
             double dsDepth      = (double)numDsDepth.Value;
@@ -545,18 +569,57 @@ namespace FlowSim
             var ch2    = BuildIrregularChannel(_xsIndex2, _xsMeasPts2, usB2, dsB2, initialFlow2, "支流2");
             var s2     = MakeSolver(ch2);
 
-            // ── 旁侧入流（干流）：在 UI 线程读取控件值，供后台线程使用 ──
-            bool   capturedLatEnabled  = chkEnableLateral.Checked;
-            double capturedLatPeak     = (double)numLateralPeakFlow.Value;
-            double capturedLatRiseTime = (double)numLateralRiseTime.Value * 3600;
+            // ── 旁侧入流/出流（干流）：在 UI 线程读取控件值，供后台线程使用 ──
+            bool   capturedLatEnabled      = chkEnableLateral.Checked;
+            double capturedLatPeak         = (double)numLateralPeakFlow.Value;
+            double capturedLatRiseTime     = (double)numLateralRiseTime.Value * 3600;
+            bool   capturedLatOutEnabled   = chkEnableLateralOut.Checked;
+            double capturedLatOutPeak      = (double)numLateralOutPeakFlow.Value;
+            double capturedLatOutRiseTime  = (double)numLateralOutRiseTime.Value * 3600;
 
-            // ── 干流工厂 ──
+            // ── 汇流位置（干流中游）：在 UI 线程读取控件值 ──
+            bool   capturedMidJunction     = chkEnableMidJunction.Checked;
+            double capturedJunctionCh      = (double)numJunctionChainage.Value * 1000; // km → m
+            double capturedUpMainPeak      = (double)numUpMainPeakFlow.Value;
+            double capturedUpMainRiseTime  = (double)numUpMainRiseTime.Value * 3600;
+
+            // ── 干流上游段（仅在中游汇流模式下使用） ──
+            Solver? upstreamMainSolver = null;
+            if (capturedMidJunction && capturedJunctionCh > 0)
+            {
+                // 从 _xsIndex3 中筛选出桩号 ≤ 汇流桩号的断面，构建干流上游段
+                var upIdx = _xsIndex3!.FindAll(r => r.chainage <= capturedJunctionCh);
+                if (upIdx.Count < 2)
+                    throw new InvalidOperationException(
+                        $"汇流桩号 {capturedJunctionCh / 1000:F1} km 之前的干流断面不足（至少需要 2 个），请减小汇流桩号或检查断面索引数据。");
+
+                var upHydro = BuildTriangularHydrograph(capturedUpMainPeak, capturedUpMainRiseTime, simTime);
+                var usBUp   = new Boundary(BoundaryConditionType.FlowHydrograph, 0, 0, null, null, upHydro);
+                var dsBUp   = new Boundary(BoundaryConditionType.NormalDepth, 0, 0, dsDepth);
+                var chUp    = BuildIrregularChannel(upIdx, _xsMeasPts3!, usBUp, dsBUp, capturedUpMainPeak * BaseFlowFraction, "干流上游段");
+                upstreamMainSolver = MakeSolver(chUp);
+                Log($"[干流上游段] 中游汇流模式：汇流桩号 {capturedJunctionCh / 1000:F1} km，干流上游段包含 {upIdx.Count} 个断面。");
+            }
+
+            // ── 干流工厂（下游段，或当无中游汇流时为全程干流） ──
             Solver MainFactory(Hydrograph combinedHydro)
             {
+                // 选取干流下游段断面（中游汇流模式：桩号 > 汇流桩号；正常模式：全部）
+                var mainIdx = capturedMidJunction && capturedJunctionCh > 0
+                    ? _xsIndex3!.FindAll(r => r.chainage >= capturedJunctionCh)
+                    : _xsIndex3!;
+
+                if (mainIdx.Count < 2)
+                    throw new InvalidOperationException(
+                        $"汇流桩号 {capturedJunctionCh / 1000:F1} km 之后的干流断面不足（至少需要 2 个），请增大汇流桩号或检查断面索引数据。");
+
+                double mainInitFlow = capturedMidJunction && capturedJunctionCh > 0
+                    ? capturedUpMainPeak * BaseFlowFraction + initialFlow1 + initialFlow2   // 上游段基流 + 支流基流
+                    : initialFlow1 + initialFlow2;
+
                 var usBMain = new Boundary(BoundaryConditionType.FlowHydrograph, 0, 0, null, null, combinedHydro);
                 var dsBMain = new Boundary(dsBcType, 0, 0, dsDepth);
-                var chMain  = BuildIrregularChannel(_xsIndex3, _xsMeasPts3, usBMain, dsBMain,
-                    initialFlow1 + initialFlow2, "干流");
+                var chMain  = BuildIrregularChannel(mainIdx, _xsMeasPts3!, usBMain, dsBMain, mainInitFlow, "干流");
 
                 // 如果启用了旁侧入流，将其附加到干流信道
                 if (capturedLatEnabled && capturedLatPeak > 0 && capturedLatRiseTime > 0)
@@ -566,10 +629,18 @@ namespace FlowSim
                     Log($"[干流] 旁侧入流已启用：峰值 {capturedLatPeak:F0} m³/s，起涨时间 {capturedLatRiseTime / 3600:F1} h");
                 }
 
+                // 如果启用了旁侧出流，将其附加到干流信道
+                if (capturedLatOutEnabled && capturedLatOutPeak > 0 && capturedLatOutRiseTime > 0)
+                {
+                    var latOutHydro = BuildTriangularHydrograph(capturedLatOutPeak, capturedLatOutRiseTime, simTime);
+                    chMain.SetLateralOutflow(latOutHydro);
+                    Log($"[干流] 旁侧出流已启用：峰值 {capturedLatOutPeak:F0} m³/s，起涨时间 {capturedLatOutRiseTime / 3600:F1} h");
+                }
+
                 return MakeSolver(chMain);
             }
 
-            return new JunctionSolver(s1, s2, MainFactory);
+            return new JunctionSolver(s1, s2, MainFactory, upstreamMainSolver);
         }
 
         private static Hydrograph BuildTriangularHydrograph(double peakFlow, double riseTime, double totalTime)

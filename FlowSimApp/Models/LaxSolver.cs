@@ -212,7 +212,7 @@ namespace FlowSim.Models
 
                 // 用 Lax-Friedrichs 格式更新面积和流量
                 double t = (TimeLevel - 0.5) * TimeStep;       // 时步中点时刻
-                double qLat = Channel.GetLateralInflowPerLength(t); // 旁侧入流（m²/s）
+                double qLat = Channel.GetNetLateralFlowPerLength(t); // 净侧向流量（m²/s，入流为正、出流为负）
                 double newA = NewArea(A_im1, A_ip1, Q_im1, Q_ip1, qLat);
                 double newQ = NewFlow(A_im1, A_ip1, Q_im1, Q_ip1, Y_im1, Y_ip1, Se_im1, Se_ip1);
 
@@ -236,7 +236,7 @@ namespace FlowSim.Models
         {
             var (ghostA, ghostQ, ghostY, ghostSe) = UsGhostNode();
             double tMid = (TimeLevel - 0.5) * TimeStep;
-            double qLat = Channel.GetLateralInflowPerLength(tMid);
+            double qLat = Channel.GetNetLateralFlowPerLength(tMid);
 
             if (Channel.UpstreamBoundary.IsFlowDependent)
             {
@@ -277,7 +277,7 @@ namespace FlowSim.Models
             int last = NumberOfNodes - 1;
             var (ghostA, ghostQ, ghostY, ghostSe) = DsGhostNode();
             double tMid = (TimeLevel - 0.5) * TimeStep;
-            double qLat = Channel.GetLateralInflowPerLength(tMid);
+            double qLat = Channel.GetNetLateralFlowPerLength(tMid);
 
             if (Channel.DownstreamBoundary.IsFlowDependent)
             {
