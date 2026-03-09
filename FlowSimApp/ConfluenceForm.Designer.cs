@@ -347,11 +347,17 @@ namespace FlowSim
             chkEnableMidJunction.AutoSize = true;
             chkEnableMidJunction.Dock     = DockStyle.Fill;
             chkEnableMidJunction.CheckedChanged += chkEnableMidJunction_CheckedChanged;
-            ConfigNum(numJunctionChainage, 10, 0.1m, 9999, 1, 1m);      // 汇流桩号（km）
+
+            // 汇流断面选择下拉框（在加载干流断面索引后填充）
+            cmbJunctionChainage.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbJunctionChainage.Dock          = DockStyle.Fill;
+            cmbJunctionChainage.Items.Add("（请先加载干流索引文件）");
+            cmbJunctionChainage.SelectedIndex = 0;
+
             ConfigNum(numUpMainPeakFlow,  500, 0, 1000000, 0, 100);     // 干流上游入流峰值
             ConfigNum(numUpMainRiseTime,    2, 0.1m, 100, 1, 1m);       // 干流上游入流起涨时间
 
-            lblJunctionInfo.Text      = "ℹ 干流河道被汇流点分为上、下两段：上游段独立求解，出口流量与两支流流量在汇流点叠加后驱动下游段。";
+            lblJunctionInfo.Text      = "ℹ 干流河道被汇流点分为上、下两段：上游段独立求解，出口流量与两支流流量在汇流点叠加后驱动下游段。加载干流索引后，在下拉框中选择汇流断面。";
             lblJunctionInfo.AutoSize  = true;
             lblJunctionInfo.Dock      = DockStyle.Fill;
             lblJunctionInfo.ForeColor = System.Drawing.Color.SteelBlue;
@@ -359,7 +365,7 @@ namespace FlowSim
 
             tblJunction.Controls.Add(chkEnableMidJunction);
             tblJunction.SetColumnSpan(chkEnableMidJunction, 2);
-            AddRow2(tblJunction, "汇流桩号（km）：",          numJunctionChainage);
+            AddRow2(tblJunction, "汇流断面：",               cmbJunctionChainage);
             AddRow2(tblJunction, "干流上游峰值（m³/s）：",   numUpMainPeakFlow);
             AddRow2(tblJunction, "干流上游起涨时间（h）：",  numUpMainRiseTime);
             tblJunction.Controls.Add(lblJunctionInfo);
@@ -367,7 +373,7 @@ namespace FlowSim
             grpJunction.Controls.Add(tblJunction);
 
             // 初始状态：中游汇流未启用，子控件禁用
-            numJunctionChainage.Enabled = false;
+            cmbJunctionChainage.Enabled = false;
             numUpMainPeakFlow.Enabled   = false;
             numUpMainRiseTime.Enabled   = false;
 
@@ -658,7 +664,7 @@ namespace FlowSim
 
         // 汇流位置（干流中游）
         private CheckBox      chkEnableMidJunction  = new CheckBox();
-        private NumericUpDown numJunctionChainage    = new NumericUpDown();
+        private ComboBox      cmbJunctionChainage   = new ComboBox();   // 替代原 numJunctionChainage
         private NumericUpDown numUpMainPeakFlow      = new NumericUpDown();
         private NumericUpDown numUpMainRiseTime      = new NumericUpDown();
         private Label         lblJunctionInfo        = new Label();
