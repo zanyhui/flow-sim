@@ -291,8 +291,9 @@ namespace FlowSim.Models
                         $"  请确保支流1、支流2和干流上游段使用相同的时间步长。");
             }
 
-            // 三段式模式中支流2的一致性检查在 RunThreeSegmentPass 中单独执行；
-            // 两段式模式中需要检查所有支流。
+            // 三段式模式：支流2在第二汇口独立汇入，其时步一致性由 RunThreeSegmentPass 中专门检查；
+            //             第一汇口只涉及支流1 + 上游主干段，此处只需验证上游段。
+            // 两段式模式：需要检查支流2（与支流1在同一汇口汇合）。
             if (_midMainSolverFactory == null)
                 Check(_trib2Solver, "支流2");
             if (_upstreamMainSolver != null)

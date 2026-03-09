@@ -695,9 +695,10 @@ namespace FlowSim
             }
 
             // 两个汇流桩号：chLo = 上游（较小），chHi = 下游（较大）
-            // 若两者相同，则退化为两段式（现有逻辑）
+            // 若两者差值 ≤ MinJunctionSeparationM，视为同一断面，退化为两段式
+            const double MinJunctionSeparationM = 1.0;   // 1 m，小于此距离视为同一断面
             bool   isThreeSegment = capturedMidJunction && capturedJunctionCh1 > 0
-                                    && Math.Abs(capturedJunctionCh1 - capturedJunctionCh2) > 1.0;
+                                    && Math.Abs(capturedJunctionCh1 - capturedJunctionCh2) > MinJunctionSeparationM;
             double chLo           = Math.Min(capturedJunctionCh1, capturedJunctionCh2);
             double chHi           = Math.Max(capturedJunctionCh1, capturedJunctionCh2);
             // 三段式时：ch1 < ch2 → s1 先汇；ch1 > ch2 → s2 先汇（需交换支流）
@@ -793,8 +794,8 @@ namespace FlowSim
 
                 midMainRefinedFactory = refinedDsBC =>
                 {
-                    // 精算时直接用最新的合并流量驱动，下游边界使用第二汇口水位
-                    // 工厂签名只提供下游边界，需重用 hydro 变量 → 先用 NormalDepth 替代（精算效果已足够）
+                    // 精算时以第二汇口水位（refinedDsBC）作为中游段下游边界；
+                    // 上游入流使用与初算相同的三角型流量过程线（上游段基流 + 第一汇口支流峰值估算）。
                     var usBMidR = new Boundary(BoundaryConditionType.FlowHydrograph, 0, 0, null, null,
                         BuildTriangularHydrograph(capturedUpMainPeak + initFlowFirst, capturedUpMainRiseTime, simTime));
                     var chMidR  = BuildIrregularChannel(midIdx, _xsMeasPts3!, usBMidR, refinedDsBC, midInitFlow, "干流中游段（精算）");
