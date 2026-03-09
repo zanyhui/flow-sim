@@ -423,21 +423,22 @@ namespace FlowSim.Models
             double bedAtOutlet = upstreamSolver.BedProfile![lastNode];
 
             int nkActual = Math.Min(nk, upstreamSolver.TimeLevel + 1);
-            var depthTable = new double[nkActual, 2];
+            // 存储绝对水位（m），ConditionResidual 将计算 target = stage - BedLevel = depth
+            var stageTable = new double[nkActual, 2];   // 列：[0] 时刻(s)，[1] 绝对水位(m)
             for (int k = 0; k < nkActual; k++)
             {
-                double depth = junctionStage[k] - bedAtOutlet;
-                if (depth < MinimumOutletDepth) depth = MinimumOutletDepth;
-                depthTable[k, 0] = k * dt;
-                depthTable[k, 1] = depth;
+                stageTable[k, 0] = k * dt;
+                stageTable[k, 1] = junctionStage[k];
             }
+
+            double initDepth = Math.Max(junctionStage[0] - bedAtOutlet, MinimumOutletDepth);
 
             return new Boundary(
                 BoundaryConditionType.StageHydrograph,
                 chainage:     0,
-                bedLevel:     0,
-                initialDepth: depthTable[0, 1],
-                hydrograph:   new Hydrograph(table: depthTable));
+                bedLevel:     bedAtOutlet,
+                initialDepth: initDepth,
+                hydrograph:   new Hydrograph(table: stageTable));
         }
 
         // ──────────────────────────────────────────────────────────────────────

@@ -587,7 +587,8 @@ namespace FlowSim
                 double dsBedLv  = xsPts.TryGetValue(xsIdx[xsIdx.Count - 1].name, out var lPts) ? lPts.z.Min() : 0;
 
                 var usB = new Boundary(usBc.Condition, 0, usBedLv, null, null, usBc.Hydrograph);
-                var dsB = new Boundary(dsBc.Condition, chLength, dsBedLv, dsDepth);
+                var dsB = new Boundary(dsBc.Condition, chLength, dsBedLv,
+                    dsBc.InitialDepth ?? dsDepth, dsBc.RatingCurve, dsBc.Hydrograph);
                 var ch  = new Channel(usB, dsB, initFlow, initMethod: InitializationMethod.GVFEquation);
 
                 var chainageList = new System.Collections.Generic.List<double>();
