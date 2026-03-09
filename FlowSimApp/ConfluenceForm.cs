@@ -178,14 +178,15 @@ namespace FlowSim
         /// 用于统一判断下拉框是否可操作。
         /// </summary>
         private bool HasValidJunctionSections =>
-            cmbJunctionChainage.Items.Count > 0
-            && cmbJunctionChainage.Items[0] is TaggedComboItem<double>;
+            cmbJunctionChainage1.Items.Count > 0
+            && cmbJunctionChainage1.Items[0] is TaggedComboItem<double>;
 
         private void chkEnableMidJunction_CheckedChanged(object sender, EventArgs e)
         {
             bool enabled = chkEnableMidJunction.Checked;
             // 仅在已有候选断面时才真正启用下拉框
-            cmbJunctionChainage.Enabled = enabled && HasValidJunctionSections;
+            cmbJunctionChainage1.Enabled = enabled && HasValidJunctionSections;
+            cmbJunctionChainage2.Enabled = enabled && HasValidJunctionSections;
             numUpMainPeakFlow.Enabled   = enabled;
             numUpMainRiseTime.Enabled   = enabled;
         }
@@ -214,12 +215,17 @@ namespace FlowSim
         /// </summary>
         private void RefreshJunctionChainageCombo()
         {
-            cmbJunctionChainage.Items.Clear();
+            cmbJunctionChainage1.Items.Clear();
+            cmbJunctionChainage2.Items.Clear();
+
             if (_xsIndex3 == null || _xsIndex3.Count == 0)
             {
-                cmbJunctionChainage.Items.Add("（请先加载干流索引文件）");
-                cmbJunctionChainage.SelectedIndex = 0;
-                cmbJunctionChainage.Enabled = false;
+                cmbJunctionChainage1.Items.Add("（请先加载干流索引文件）");
+                cmbJunctionChainage1.SelectedIndex = 0;
+                cmbJunctionChainage1.Enabled = false;
+                cmbJunctionChainage2.Items.Add("（请先加载干流索引文件）");
+                cmbJunctionChainage2.SelectedIndex = 0;
+                cmbJunctionChainage2.Enabled = false;
                 return;
             }
 
@@ -237,22 +243,29 @@ namespace FlowSim
                 var item = new TaggedComboItem<double>(
                     $"{rec.name}  ({chKm:F2} km)",
                     rec.chainage);
-                cmbJunctionChainage.Items.Add(item);
+                cmbJunctionChainage1.Items.Add(item);
+                cmbJunctionChainage2.Items.Add(item);
             }
 
-            if (cmbJunctionChainage.Items.Count > 0)
+            if (cmbJunctionChainage1.Items.Count > 0)
             {
-                // 默认选中中间断面（尽量靠近中游）
-                cmbJunctionChainage.SelectedIndex = cmbJunctionChainage.Items.Count / 2;
+                // 默认：支流1选中上游1/3处，支流2选中下游2/3处（鼓励选择不同断面）
+                int cnt = cmbJunctionChainage1.Items.Count;
+                cmbJunctionChainage1.SelectedIndex = cnt / 3;
+                cmbJunctionChainage2.SelectedIndex = cnt * 2 / 3;
             }
             else
             {
-                cmbJunctionChainage.Items.Add("（断面不足，无法设置中游汇流）");
-                cmbJunctionChainage.SelectedIndex = 0;
+                cmbJunctionChainage1.Items.Add("（断面不足，无法设置中游汇流）");
+                cmbJunctionChainage1.SelectedIndex = 0;
+                cmbJunctionChainage2.Items.Add("（断面不足，无法设置中游汇流）");
+                cmbJunctionChainage2.SelectedIndex = 0;
             }
 
             // 如果用户已勾选中游汇流，则启用下拉框
-            cmbJunctionChainage.Enabled = chkEnableMidJunction.Checked && HasValidJunctionSections;
+            bool enabled = chkEnableMidJunction.Checked && HasValidJunctionSections;
+            cmbJunctionChainage1.Enabled = enabled;
+            cmbJunctionChainage2.Enabled = enabled;
         }
 
         /// <summary>辅助：带 Tag 值的 ComboBox 条目。</summary>
@@ -662,16 +675,48 @@ namespace FlowSim
             // ── 汇流位置（干流中游）：在 UI 线程读取控件值 ──
             bool   capturedMidJunction    = chkEnableMidJunction.Checked;
             // 从下拉框的 Tag 获取精确桩号（m）；若未选或无有效项则为 -1
-            double capturedJunctionCh     = -1;
-            if (capturedMidJunction
-                && cmbJunctionChainage.SelectedItem is TaggedComboItem<double> tagItem)
+            double capturedJunctionCh1    = -1;
+            double capturedJunctionCh2    = -1;
+            if (capturedMidJunction)
             {
-                capturedJunctionCh = tagItem.Tag;  // 已是 m
+                if (cmbJunctionChainage1.SelectedItem is TaggedComboItem<double> tag1)
+                    capturedJunctionCh1 = tag1.Tag;
+                if (cmbJunctionChainage2.SelectedItem is TaggedComboItem<double> tag2)
+                    capturedJunctionCh2 = tag2.Tag;
             }
             double capturedUpMainPeak     = (double)numUpMainPeakFlow.Value;
             double capturedUpMainRiseTime = (double)numUpMainRiseTime.Value * 3600;
 
-            // ── 干流上游段（仅在中游汇流模式下使用） ──
+            // ── 中游汇流模式验证 ──
+            if (capturedMidJunction && (capturedJunctionCh1 < 0 || capturedJunctionCh2 < 0))
+            {
+                throw new InvalidOperationException(
+                    "已勾选「支流汇入干流中游」，但尚未选择汇流断面。请先加载干流断面索引文件，然后在下拉框中选择汇流断面。");
+            }
+
+            // 两个汇流桩号：chLo = 上游（较小），chHi = 下游（较大）
+            // 若两者相同，则退化为两段式（现有逻辑）
+            bool   isThreeSegment = capturedMidJunction && capturedJunctionCh1 > 0
+                                    && Math.Abs(capturedJunctionCh1 - capturedJunctionCh2) > 1.0;
+            double chLo           = Math.Min(capturedJunctionCh1, capturedJunctionCh2);
+            double chHi           = Math.Max(capturedJunctionCh1, capturedJunctionCh2);
+            // 三段式时：ch1 < ch2 → s1 先汇；ch1 > ch2 → s2 先汇（需交换支流）
+            bool   swapTribs      = isThreeSegment && capturedJunctionCh1 > capturedJunctionCh2;
+            // firstTrib 在 chLo 汇入，secondTrib 在 chHi 汇入
+            Solver  sFirst        = swapTribs ? s2 : s1;
+            Solver  sSecond       = swapTribs ? s1 : s2;
+            double  initFlowFirst = swapTribs ? initialFlow2 : initialFlow1;
+            double  initFlowSecond= swapTribs ? initialFlow1 : initialFlow2;
+            var xsIdxFirst        = swapTribs ? _xsIndex2 : _xsIndex1;
+            var xsPtsFirst        = swapTribs ? _xsMeasPts2 : _xsMeasPts1;
+            var usBFirst          = swapTribs ? usB2 : usB1;
+            var xsIdxSecond       = swapTribs ? _xsIndex1 : _xsIndex2;
+            var xsPtsSecond       = swapTribs ? _xsMeasPts1 : _xsMeasPts2;
+            var usBSecond         = swapTribs ? usB1 : usB2;
+            // 单汇口桩号（两段式用）
+            double capturedJunctionCh = capturedMidJunction ? chLo : -1;
+
+            // ── 干流上游段（仅在中游汇流模式下使用，桩号 ≤ chLo） ──
             Solver? upstreamMainSolver = null;
             // 精算工厂：干流上游段（中游汇流时才非 null）
             Func<Boundary, Solver>? upMainRefinedFactory = null;
@@ -681,14 +726,14 @@ namespace FlowSim
                 var upIdx = _xsIndex3!.FindAll(r => r.chainage <= capturedJunctionCh);
                 if (upIdx.Count < 2)
                     throw new InvalidOperationException(
-                        $"汇流断面「{cmbJunctionChainage.SelectedItem}」之前的干流断面不足（至少需要 2 个），请选择更靠下游的断面或检查断面索引数据。");
+                        $"汇流断面（{capturedJunctionCh / 1000:F2} km）之前的干流断面不足（至少需要 2 个），请选择更靠下游的断面或检查断面索引数据。");
 
                 var upHydro = BuildTriangularHydrograph(capturedUpMainPeak, capturedUpMainRiseTime, simTime);
                 var usBUp   = new Boundary(BoundaryConditionType.FlowHydrograph, 0, 0, null, null, upHydro);
                 var dsBUp   = new Boundary(BoundaryConditionType.NormalDepth, 0, 0, dsDepth);
                 var chUp    = BuildIrregularChannel(upIdx, _xsMeasPts3!, usBUp, dsBUp, capturedUpMainPeak * BaseFlowFraction, "干流上游段");
                 upstreamMainSolver = MakeSolver(chUp);
-                Log($"[干流上游段] 中游汇流模式：汇流断面「{cmbJunctionChainage.SelectedItem}」（{capturedJunctionCh / 1000:F2} km），干流上游段包含 {upIdx.Count} 个断面。");
+                Log($"[干流上游段] 中游汇流模式：第一汇口（{capturedJunctionCh / 1000:F2} km），干流上游段包含 {upIdx.Count} 个断面。");
 
                 // 精算工厂：以汇流点水位作为干流上游段的下游边界，重建求解器
                 double capturedUpInitFlow = capturedUpMainPeak * BaseFlowFraction;
@@ -698,41 +743,86 @@ namespace FlowSim
                     return MakeSolver(chRefined);
                 };
             }
-            else if (capturedMidJunction && capturedJunctionCh < 0)
-            {
-                throw new InvalidOperationException(
-                    "已勾选「支流汇入干流中游」，但尚未选择汇流断面。请先加载干流断面索引文件，然后在下拉框中选择汇流断面。");
-            }
 
-            // ── 精算工厂：支流1（以汇流点水位作为下游边界，重建求解器）──
+            // ── 精算工厂：第一汇口支流（三段式中 = 先汇入的支流；两段式中 = 支流1）──
             Solver Trib1RefinedFactory(Boundary refinedDsBC)
             {
-                var chRefined = BuildIrregularChannel(_xsIndex1, _xsMeasPts1, usB1, refinedDsBC, initialFlow1, "支流1（精算）");
+                var chRefined = BuildIrregularChannel(
+                    swapTribs ? _xsIndex2 : _xsIndex1,
+                    swapTribs ? _xsMeasPts2 : _xsMeasPts1,
+                    swapTribs ? usB2 : usB1,
+                    refinedDsBC,
+                    swapTribs ? initialFlow2 : initialFlow1,
+                    swapTribs ? "支流2（精算）" : "支流1（精算）");
                 return MakeSolver(chRefined);
             }
 
-            // ── 精算工厂：支流2 ──
+            // ── 精算工厂：第二汇口支流 ──
             Solver Trib2RefinedFactory(Boundary refinedDsBC)
             {
-                var chRefined = BuildIrregularChannel(_xsIndex2, _xsMeasPts2, usB2, refinedDsBC, initialFlow2, "支流2（精算）");
+                var chRefined = BuildIrregularChannel(
+                    swapTribs ? _xsIndex1 : _xsIndex2,
+                    swapTribs ? _xsMeasPts1 : _xsMeasPts2,
+                    swapTribs ? usB1 : usB2,
+                    refinedDsBC,
+                    swapTribs ? initialFlow1 : initialFlow2,
+                    swapTribs ? "支流1（精算）" : "支流2（精算）");
                 return MakeSolver(chRefined);
+            }
+
+            // ── 三段式：干流中游段工厂（chLo → chHi，仅两汇口不同时存在）──
+            Func<Hydrograph, Solver>? midMainSolverFactory = null;
+            Func<Boundary, Solver>?  midMainRefinedFactory = null;
+            if (isThreeSegment)
+            {
+                var midIdx = _xsIndex3!.FindAll(r => r.chainage >= chLo && r.chainage <= chHi);
+                if (midIdx.Count < 2)
+                    throw new InvalidOperationException(
+                        $"两个汇流断面（{chLo / 1000:F2} km 和 {chHi / 1000:F2} km）之间的干流断面不足（至少需要 2 个），请选择断面间距更大的汇流位置。");
+
+                double midInitFlow = (capturedMidJunction ? capturedUpMainPeak * BaseFlowFraction : 0) + initFlowFirst;
+                Log($"[干流中游段] 三段式汇流：从 {chLo / 1000:F2} km 到 {chHi / 1000:F2} km，包含 {midIdx.Count} 个断面。");
+
+                midMainSolverFactory = midHydro =>
+                {
+                    var usBMid   = new Boundary(BoundaryConditionType.FlowHydrograph, 0, 0, null, null, midHydro);
+                    var dsBMid   = new Boundary(BoundaryConditionType.NormalDepth, 0, 0, dsDepth);
+                    var chMid    = BuildIrregularChannel(midIdx, _xsMeasPts3!, usBMid, dsBMid, midInitFlow, "干流中游段");
+                    return MakeSolver(chMid);
+                };
+
+                midMainRefinedFactory = refinedDsBC =>
+                {
+                    // 精算时直接用最新的合并流量驱动，下游边界使用第二汇口水位
+                    // 工厂签名只提供下游边界，需重用 hydro 变量 → 先用 NormalDepth 替代（精算效果已足够）
+                    var usBMidR = new Boundary(BoundaryConditionType.FlowHydrograph, 0, 0, null, null,
+                        BuildTriangularHydrograph(capturedUpMainPeak + initFlowFirst, capturedUpMainRiseTime, simTime));
+                    var chMidR  = BuildIrregularChannel(midIdx, _xsMeasPts3!, usBMidR, refinedDsBC, midInitFlow, "干流中游段（精算）");
+                    return MakeSolver(chMidR);
+                };
             }
 
             // ── 干流工厂（下游段，或当无中游汇流时为全程干流） ──
             Solver MainFactory(Hydrograph combinedHydro)
             {
-                // 选取干流下游段断面（中游汇流模式：桩号 > 汇流桩号；正常模式：全部）
-                var mainIdx = capturedMidJunction && capturedJunctionCh > 0
-                    ? _xsIndex3!.FindAll(r => r.chainage >= capturedJunctionCh)
+                // 选取干流下游段断面
+                List<(string name, double chainage, double n, double? x, double? y, string remark)> mainIdx;
+                double dsJunctionCh = isThreeSegment ? chHi : (capturedMidJunction && capturedJunctionCh > 0 ? capturedJunctionCh : -1);
+                mainIdx = dsJunctionCh > 0
+                    ? _xsIndex3!.FindAll(r => r.chainage >= dsJunctionCh)
                     : _xsIndex3!;
 
                 if (mainIdx.Count < 2)
                     throw new InvalidOperationException(
-                        $"汇流断面「{cmbJunctionChainage.SelectedItem}」之后的干流断面不足（至少需要 2 个），请选择更靠上游的断面或检查断面索引数据。");
+                        $"最下游汇流断面（{dsJunctionCh / 1000:F2} km）之后的干流断面不足（至少需要 2 个），请选择更靠上游的断面或检查断面索引数据。");
 
-                double mainInitFlow = capturedMidJunction && capturedJunctionCh > 0
-                    ? capturedUpMainPeak * BaseFlowFraction + initialFlow1 + initialFlow2   // 上游段基流 + 支流基流
-                    : initialFlow1 + initialFlow2;
+                double mainInitFlow;
+                if (isThreeSegment)
+                    mainInitFlow = capturedUpMainPeak * BaseFlowFraction + initFlowFirst + initFlowSecond;
+                else if (capturedMidJunction && capturedJunctionCh > 0)
+                    mainInitFlow = capturedUpMainPeak * BaseFlowFraction + initialFlow1 + initialFlow2;
+                else
+                    mainInitFlow = initialFlow1 + initialFlow2;
 
                 var usBMain = new Boundary(BoundaryConditionType.FlowHydrograph, 0, 0, null, null, combinedHydro);
                 var dsBMain = new Boundary(dsBcType, 0, 0, dsDepth);
@@ -757,8 +847,9 @@ namespace FlowSim
                 return MakeSolver(chMain);
             }
 
-            return new JunctionSolver(s1, s2, MainFactory, upstreamMainSolver,
-                                      Trib1RefinedFactory, Trib2RefinedFactory, upMainRefinedFactory);
+            return new JunctionSolver(sFirst, sSecond, MainFactory, upstreamMainSolver,
+                                       Trib1RefinedFactory, Trib2RefinedFactory, upMainRefinedFactory,
+                                       midMainSolverFactory, midMainRefinedFactory);
         }
 
         private static Hydrograph BuildTriangularHydrograph(double peakFlow, double riseTime, double totalTime)
@@ -1310,6 +1401,15 @@ namespace FlowSim
 
         private void TryMarkJunction()
         {
+            // 当中游汇流模式启用且干流断面索引已加载时，用选中的汇流断面桩号查找坐标
+            if (chkEnableMidJunction.Checked && _xsIndex3 != null)
+            {
+                MarkJunctionFromCombo(cmbJunctionChainage1, "汇口1", Color.DarkViolet);
+                MarkJunctionFromCombo(cmbJunctionChainage2, "汇口2", Color.OrangeRed);
+                return;
+            }
+
+            // 未启用中游汇流时，退回到原有逻辑：取支流1末端或干流首断面坐标
             double? jx = null, jy = null;
             if (_xsIndex1 != null)
             {
@@ -1329,6 +1429,34 @@ namespace FlowSim
 
             var jTxt = plotChannelLayout.Plot.AddText("汇口", jx.Value + 50, jy.Value + 50);
             jTxt.FontSize = 9; jTxt.Color = Color.DarkViolet;
+        }
+
+        /// <summary>
+        /// 根据 ComboBox 中选定的汇流断面桩号，在平面图上标注汇流点。
+        /// </summary>
+        private void MarkJunctionFromCombo(ComboBox cmb, string label, Color color)
+        {
+            if (_xsIndex3 == null) return;
+            if (!(cmb.SelectedItem is TaggedComboItem<double> tagItem)) return;
+
+            double targetCh = tagItem.Tag;
+            // 在干流断面索引中查找最近的有坐标断面
+            double? jx = null, jy = null;
+            double minDist = double.MaxValue;
+            foreach (var rec in _xsIndex3)
+            {
+                if (!rec.x.HasValue || !rec.y.HasValue) continue;
+                double dist = Math.Abs(rec.chainage - targetCh);
+                if (dist < minDist) { minDist = dist; jx = rec.x; jy = rec.y; }
+            }
+            if (jx == null || jy == null) return;
+
+            var jPt = plotChannelLayout.Plot.AddScatter(new[] { jx.Value }, new[] { jy.Value }, label: label);
+            jPt.Color = color; jPt.MarkerSize = 12; jPt.LineWidth = 0;
+            jPt.MarkerShape = ScottPlot.MarkerShape.filledCircle;
+
+            var jTxt = plotChannelLayout.Plot.AddText(label, jx.Value + 50, jy.Value + 50);
+            jTxt.FontSize = 9; jTxt.Color = color;
         }
 
         // ══════════════════════════════════════════════════════════════

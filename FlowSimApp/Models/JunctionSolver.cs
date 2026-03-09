@@ -33,10 +33,17 @@ namespace FlowSim.Models
 
         private readonly Func<Hydrograph, Solver> _mainSolverFactory;
 
+        // ── 中游段工厂（可选，仅三段式汇流使用）──
+        // 当支流1与支流2的汇流点位于干流的不同桩号时，干流被划分为三段：
+        //   上游段 → [支流1汇口] → 中游段 → [支流2汇口] → 下游段
+        // 此工厂接受中游段的上游流量过程线，返回新的中游段求解器。
+        private readonly Func<Hydrograph, Solver>? _midMainSolverFactory;
+
         // ── 精算工厂（可选）：接受下游水位边界，返回新的求解器实例 ──
         private readonly Func<Boundary, Solver>? _trib1RefinedFactory;
         private readonly Func<Boundary, Solver>? _trib2RefinedFactory;
         private readonly Func<Boundary, Solver>? _upMainRefinedFactory;
+        private readonly Func<Boundary, Solver>? _midMainRefinedFactory;
 
         /// <summary>
         /// 汇流点水位边界中允许的最小出口水深（m）。
@@ -61,6 +68,15 @@ namespace FlowSim.Models
         /// 干流上游段求解器（中游汇流时使用；精算完成后返回精算版本；否则为 null）。
         /// </summary>
         public Solver? UpstreamMainSolver => _upstreamMainSolver;
+
+        /// <summary>中游段求解器（仅三段式汇流有效；精算后返回精算版本）。</summary>
+        public Solver? MidMainSolver { get; private set; }
+
+        /// <summary>
+        /// 第一汇流点（支流1汇口）水位过程线（m），仅三段式汇流有效。
+        /// 单汇口模式时为 null；精算后为精算水位。
+        /// </summary>
+        public double[]? FirstJunctionStage { get; private set; }
 
         /// <summary>干流（下游段）求解器，<see cref="Run"/> 执行后才赋值。</summary>
         public Solver? MainSolver { get; private set; }
@@ -104,6 +120,14 @@ namespace FlowSim.Models
         /// <param name="upMainRefinedFactory">
         ///   （可选）干流上游段精算工厂，中游汇流场景同上。
         /// </param>
+        /// <param name="midMainSolverFactory">
+        ///   （可选）干流中游段初算工厂（三段式汇流）：接受第一汇口的合并入流，返回中游段求解器。
+        ///   提供此参数时，支流1和干流上游段在第一汇口汇合，再通过中游段流向第二汇口，
+        ///   支流2在第二汇口汇入，最终进入下游段。
+        /// </param>
+        /// <param name="midMainRefinedFactory">
+        ///   （可选）干流中游段精算工厂，接受第二汇口水位边界，返回精算中游段求解器。
+        /// </param>
         public JunctionSolver(
             Solver trib1Solver,
             Solver trib2Solver,
@@ -111,7 +135,9 @@ namespace FlowSim.Models
             Solver? upstreamMainSolver = null,
             Func<Boundary, Solver>? trib1RefinedFactory = null,
             Func<Boundary, Solver>? trib2RefinedFactory = null,
-            Func<Boundary, Solver>? upMainRefinedFactory = null)
+            Func<Boundary, Solver>? upMainRefinedFactory = null,
+            Func<Hydrograph, Solver>? midMainSolverFactory = null,
+            Func<Boundary, Solver>? midMainRefinedFactory = null)
         {
             _trib1Solver            = trib1Solver;
             _trib2Solver            = trib2Solver;
@@ -120,6 +146,8 @@ namespace FlowSim.Models
             _trib1RefinedFactory    = trib1RefinedFactory;
             _trib2RefinedFactory    = trib2RefinedFactory;
             _upMainRefinedFactory   = upMainRefinedFactory;
+            _midMainSolverFactory   = midMainSolverFactory;
+            _midMainRefinedFactory  = midMainRefinedFactory;
         }
 
         // ── 公开方法 ──────────────────────────────────────────────────────────
@@ -127,17 +155,42 @@ namespace FlowSim.Models
         /// <summary>
         /// 执行顺序仿真。
         /// 若提供了精算工厂，则在初算完成后执行一次精算迭代，以改善汇流点水位的物理一致性。
+        /// 若提供了 <see cref="_midMainSolverFactory"/>，则按三段式算法执行：
+        ///   上游段 + 支流1 → 汇口1 → 中游段 + 支流2 → 汇口2 → 下游段。
         /// </summary>
         /// <param name="verbose">日志详细程度（传递给各子求解器）。</param>
         public void Run(int verbose = 0)
         {
             bool willRefine = _trib1RefinedFactory != null
                            || _trib2RefinedFactory != null
-                           || _upMainRefinedFactory != null;
+                           || _upMainRefinedFactory != null
+                           || _midMainRefinedFactory != null;
 
-            // ─── 初算 ──────────────────────────────────────────────────────
             string pass = willRefine ? "（初算）" : "";
 
+            if (_midMainSolverFactory != null)
+            {
+                // ─── 三段式初算 ────────────────────────────────────────────
+                RunThreeSegmentPass(verbose, pass);
+            }
+            else
+            {
+                // ─── 两段式初算（原有逻辑）──────────────────────────────────
+                RunTwoSegmentPass(verbose, pass);
+            }
+
+            // ─── 精算（可选）──────────────────────────────────────────────
+            if (willRefine)
+                RunRefinedPass(verbose);
+        }
+
+        // ── 私有方法 ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 两段式初算（两支流在同一汇口汇入干流）。
+        /// </summary>
+        private void RunTwoSegmentPass(int verbose, string pass)
+        {
             LogCallback?.Invoke($"开始计算支流1{pass}…");
             _trib1Solver.StepCallback = StepCallback;
             _trib1Solver.Run(verbose);
@@ -163,19 +216,68 @@ namespace FlowSim.Models
             MainSolver.StepCallback = StepCallback;
             MainSolver.Run(verbose);
 
-            // 记录初算汇流点水位
+            // 记录汇流点水位
             ExtractJunctionStage();
-
-            // ─── 精算（可选）──────────────────────────────────────────────
-            if (willRefine)
-                RunRefinedPass(verbose);
         }
 
-        // ── 私有方法 ─────────────────────────────────────────────────────────
-
         /// <summary>
-        /// 验证各上游求解器时间步长一致，防止流量时序错位。
+        /// 三段式初算（支流1在第一汇口汇入，支流2在第二汇口汇入，干流分三段）。
+        /// 上游段 + 支流1 → 汇口1 → 中游段 → 汇口2（+ 支流2） → 下游段。
         /// </summary>
+        private void RunThreeSegmentPass(int verbose, string pass)
+        {
+            // 第一汇口上游各支流
+            LogCallback?.Invoke($"开始计算支流1（第一汇口）{pass}…");
+            _trib1Solver.StepCallback = StepCallback;
+            _trib1Solver.Run(verbose);
+
+            if (_upstreamMainSolver != null)
+            {
+                LogCallback?.Invoke($"开始计算干流上游段{pass}…");
+                _upstreamMainSolver.StepCallback = StepCallback;
+                _upstreamMainSolver.Run(verbose);
+            }
+
+            ValidateTimeSteps();
+
+            // 第一汇口：合并支流1 + 上游干流出口流量
+            LogCallback?.Invoke($"汇口1：合并支流1与干流上游段出口流量{pass}…");
+            var hydro1 = BuildCombinedHydrograph(_trib1Solver, null, _upstreamMainSolver);
+
+            // 求解中游段
+            LogCallback?.Invoke($"开始计算干流（中游段）{pass}…");
+            MidMainSolver = _midMainSolverFactory!(hydro1);
+            MidMainSolver.StepCallback = StepCallback;
+            MidMainSolver.Run(verbose);
+
+            // 记录第一汇流点水位（中游段首节点水位）
+            ExtractFirstJunctionStage();
+
+            // 第二汇口上游：支流2
+            LogCallback?.Invoke($"开始计算支流2（第二汇口）{pass}…");
+            _trib2Solver.StepCallback = StepCallback;
+            _trib2Solver.Run(verbose);
+
+            // 时间步一致性（支流2 vs 支流1）
+            if (Math.Abs(_trib2Solver.TimeStep - _trib1Solver.TimeStep) > TimeStepRelTol * _trib1Solver.TimeStep)
+                throw new InvalidOperationException(
+                    $"支流2的时间步长（{_trib2Solver.TimeStep} s）与支流1（{_trib1Solver.TimeStep} s）不一致。");
+
+            // 第二汇口：合并中游段出口 + 支流2出口
+            LogCallback?.Invoke($"汇口2：合并中游段与支流2出口流量{pass}…");
+            var hydro2 = BuildCombinedHydrograph(MidMainSolver, _trib2Solver, null);
+
+            // 求解下游段
+            LogCallback?.Invoke($"开始计算干流（下游段）{pass}…");
+            MainSolver = _mainSolverFactory(hydro2);
+            MainSolver.StepCallback = StepCallback;
+            MainSolver.Run(verbose);
+
+            // 记录第二汇流点水位（下游段首节点水位）
+            ExtractJunctionStage();
+        }
+
+
         private void ValidateTimeSteps()
         {
             double dt = _trib1Solver.TimeStep;
@@ -189,13 +291,17 @@ namespace FlowSim.Models
                         $"  请确保支流1、支流2和干流上游段使用相同的时间步长。");
             }
 
-            Check(_trib2Solver, "支流2");
+            // 三段式模式中支流2的一致性检查在 RunThreeSegmentPass 中单独执行；
+            // 两段式模式中需要检查所有支流。
+            if (_midMainSolverFactory == null)
+                Check(_trib2Solver, "支流2");
             if (_upstreamMainSolver != null)
                 Check(_upstreamMainSolver, "干流上游段");
         }
 
         /// <summary>
         /// 精算阶段：以初算得到的汇流点水位作为各上游段的下游水位边界，重新求解后再次求解干流。
+        /// 支持两段式和三段式汇流。
         /// </summary>
         private void RunRefinedPass(int verbose)
         {
@@ -211,44 +317,117 @@ namespace FlowSim.Models
             LogCallback?.Invoke(
                 $"汇流点初算水位：{minStage:F3}～{maxStage:F3} m，开始精算迭代…");
 
-            // ── 精算支流1 ──
-            if (_trib1RefinedFactory != null)
+            if (_midMainSolverFactory != null)
             {
-                var stageBC = BuildJunctionStageBC(_trib1Solver, JunctionStage, dt, nk);
-                LogCallback?.Invoke("精算：重新求解支流1（汇流点水位下游边界）…");
-                _trib1Solver = _trib1RefinedFactory(stageBC);
-                _trib1Solver.StepCallback = StepCallback;
-                _trib1Solver.Run(verbose);
-            }
+                // ─── 三段式精算 ────────────────────────────────────────────
+                // 第一汇口水位 = 中游段首节点水位
+                var firstStage = FirstJunctionStage!;
 
-            // ── 精算支流2 ──
-            if (_trib2RefinedFactory != null)
+                // 精算支流1（使用第一汇口水位作为下游边界）
+                if (_trib1RefinedFactory != null)
+                {
+                    var stageBC = BuildJunctionStageBC(_trib1Solver, firstStage, dt, nk);
+                    LogCallback?.Invoke("精算：重新求解支流1（第一汇口水位下游边界）…");
+                    _trib1Solver = _trib1RefinedFactory(stageBC);
+                    _trib1Solver.StepCallback = StepCallback;
+                    _trib1Solver.Run(verbose);
+                }
+
+                // 精算干流上游段（使用第一汇口水位作为下游边界）
+                if (_upMainRefinedFactory != null && _upstreamMainSolver != null)
+                {
+                    var stageBC = BuildJunctionStageBC(_upstreamMainSolver, firstStage, dt, nk);
+                    LogCallback?.Invoke("精算：重新求解干流上游段（第一汇口水位下游边界）…");
+                    _upstreamMainSolver = _upMainRefinedFactory(stageBC);
+                    _upstreamMainSolver.StepCallback = StepCallback;
+                    _upstreamMainSolver.Run(verbose);
+                }
+
+                // 重新汇合第一汇口流量，精算中游段
+                LogCallback?.Invoke("精算：重新汇合汇口1流量…");
+                var hydro1R = BuildCombinedHydrograph(_trib1Solver, null, _upstreamMainSolver);
+
+                // 精算中游段（使用第二汇口水位作为下游边界）
+                if (_midMainRefinedFactory != null)
+                {
+                    var stageBC = BuildJunctionStageBC(MidMainSolver!, JunctionStage, dt, nk);
+                    LogCallback?.Invoke("精算：重新求解干流中游段（第二汇口水位下游边界）…");
+                    MidMainSolver = _midMainRefinedFactory(stageBC);
+                    MidMainSolver.StepCallback = StepCallback;
+                    MidMainSolver.Run(verbose);
+                }
+                else
+                {
+                    LogCallback?.Invoke("精算：重新求解干流（中游段）…");
+                    MidMainSolver = _midMainSolverFactory!(hydro1R);
+                    MidMainSolver.StepCallback = StepCallback;
+                    MidMainSolver.Run(verbose);
+                }
+
+                // 更新第一汇口水位
+                ExtractFirstJunctionStage();
+
+                // 精算支流2（使用第二汇口水位作为下游边界）
+                if (_trib2RefinedFactory != null)
+                {
+                    var stageBC = BuildJunctionStageBC(_trib2Solver, JunctionStage, dt, nk);
+                    LogCallback?.Invoke("精算：重新求解支流2（第二汇口水位下游边界）…");
+                    _trib2Solver = _trib2RefinedFactory(stageBC);
+                    _trib2Solver.StepCallback = StepCallback;
+                    _trib2Solver.Run(verbose);
+                }
+
+                // 重新汇合第二汇口流量，精算下游段
+                LogCallback?.Invoke("精算：重新汇合汇口2流量…");
+                var hydro2R = BuildCombinedHydrograph(MidMainSolver, _trib2Solver, null);
+
+                LogCallback?.Invoke("精算：重新求解干流（下游段）…");
+                MainSolver = _mainSolverFactory(hydro2R);
+                MainSolver.StepCallback = StepCallback;
+                MainSolver.Run(verbose);
+            }
+            else
             {
-                var stageBC = BuildJunctionStageBC(_trib2Solver, JunctionStage, dt, nk);
-                LogCallback?.Invoke("精算：重新求解支流2（汇流点水位下游边界）…");
-                _trib2Solver = _trib2RefinedFactory(stageBC);
-                _trib2Solver.StepCallback = StepCallback;
-                _trib2Solver.Run(verbose);
+                // ─── 两段式精算（原有逻辑）──────────────────────────────────
+                // 精算支流1
+                if (_trib1RefinedFactory != null)
+                {
+                    var stageBC = BuildJunctionStageBC(_trib1Solver, JunctionStage, dt, nk);
+                    LogCallback?.Invoke("精算：重新求解支流1（汇流点水位下游边界）…");
+                    _trib1Solver = _trib1RefinedFactory(stageBC);
+                    _trib1Solver.StepCallback = StepCallback;
+                    _trib1Solver.Run(verbose);
+                }
+
+                // 精算支流2
+                if (_trib2RefinedFactory != null)
+                {
+                    var stageBC = BuildJunctionStageBC(_trib2Solver, JunctionStage, dt, nk);
+                    LogCallback?.Invoke("精算：重新求解支流2（汇流点水位下游边界）…");
+                    _trib2Solver = _trib2RefinedFactory(stageBC);
+                    _trib2Solver.StepCallback = StepCallback;
+                    _trib2Solver.Run(verbose);
+                }
+
+                // 精算干流上游段
+                if (_upMainRefinedFactory != null && _upstreamMainSolver != null)
+                {
+                    var stageBC = BuildJunctionStageBC(_upstreamMainSolver, JunctionStage, dt, nk);
+                    LogCallback?.Invoke("精算：重新求解干流上游段（汇流点水位下游边界）…");
+                    _upstreamMainSolver = _upMainRefinedFactory(stageBC);
+                    _upstreamMainSolver.StepCallback = StepCallback;
+                    _upstreamMainSolver.Run(verbose);
+                }
+
+                // 重新合并流量，再次求解干流
+                LogCallback?.Invoke("精算：重新汇合上游出口流量…");
+                var refinedCombined = BuildCombinedHydrograph(_trib1Solver, _trib2Solver, _upstreamMainSolver);
+
+                LogCallback?.Invoke("精算：重新求解干流（下游段）…");
+                MainSolver = _mainSolverFactory(refinedCombined);
+                MainSolver.StepCallback = StepCallback;
+                MainSolver.Run(verbose);
             }
-
-            // ── 精算干流上游段 ──
-            if (_upMainRefinedFactory != null && _upstreamMainSolver != null)
-            {
-                var stageBC = BuildJunctionStageBC(_upstreamMainSolver, JunctionStage, dt, nk);
-                LogCallback?.Invoke("精算：重新求解干流上游段（汇流点水位下游边界）…");
-                _upstreamMainSolver = _upMainRefinedFactory(stageBC);
-                _upstreamMainSolver.StepCallback = StepCallback;
-                _upstreamMainSolver.Run(verbose);
-            }
-
-            // ── 重新合并流量，再次求解干流 ──
-            LogCallback?.Invoke("精算：重新汇合上游出口流量…");
-            var refinedCombined = BuildCombinedHydrograph(_trib1Solver, _trib2Solver, _upstreamMainSolver);
-
-            LogCallback?.Invoke("精算：重新求解干流（下游段）…");
-            MainSolver = _mainSolverFactory(refinedCombined);
-            MainSolver.StepCallback = StepCallback;
-            MainSolver.Run(verbose);
 
             // 更新为精算后的汇流点水位
             ExtractJunctionStage();
@@ -273,6 +452,18 @@ namespace FlowSim.Models
             JunctionStage = new double[nk];
             for (int k = 0; k < nk; k++)
                 JunctionStage[k] = MainSolver.Level![k, 0];
+        }
+
+        /// <summary>
+        /// 从干流中游段首节点提取第一汇流点水位，写入 <see cref="FirstJunctionStage"/>（三段式专用）。
+        /// </summary>
+        private void ExtractFirstJunctionStage()
+        {
+            if (MidMainSolver == null) return;
+            int nk = MidMainSolver.TimeLevel + 1;
+            FirstJunctionStage = new double[nk];
+            for (int k = 0; k < nk; k++)
+                FirstJunctionStage[k] = MidMainSolver.Level![k, 0];
         }
 
         /// <summary>
@@ -318,24 +509,25 @@ namespace FlowSim.Models
 
         /// <summary>
         /// 将各上游段出口流量按时步对齐求和，构造干流下游段的上游流量过程线。
+        /// <paramref name="trib2"/> 可为 null（三段式汇流中第一汇口只有支流1）。
         /// </summary>
         private static Hydrograph BuildCombinedHydrograph(
-            Solver trib1, Solver trib2, Solver? upMain)
+            Solver trib1, Solver? trib2, Solver? upMain)
         {
-            int nk = Math.Min(trib1.TimeLevel + 1, trib2.TimeLevel + 1);
-            if (upMain != null)
-                nk = Math.Min(nk, upMain.TimeLevel + 1);
+            int nk = trib1.TimeLevel + 1;
+            if (trib2 != null) nk = Math.Min(nk, trib2.TimeLevel + 1);
+            if (upMain != null) nk = Math.Min(nk, upMain.TimeLevel + 1);
 
             double dt  = trib1.TimeStep;
             int    nn1 = trib1.NumberOfNodes;
-            int    nn2 = trib2.NumberOfNodes;
+            int    nn2 = trib2?.NumberOfNodes ?? 0;
             int    nnUp = upMain?.NumberOfNodes ?? 0;
 
             var table = new double[nk, 2];
             for (int k = 0; k < nk; k++)
             {
                 double q1  = trib1.Flow![k, nn1 - 1];
-                double q2  = trib2.Flow![k, nn2 - 1];
+                double q2  = trib2 != null ? trib2.Flow![k, nn2 - 1] : 0.0;
                 double qUp = upMain != null ? upMain.Flow![k, nnUp - 1] : 0.0;
                 table[k, 0] = k * dt;
                 table[k, 1] = q1 + q2 + qUp;
