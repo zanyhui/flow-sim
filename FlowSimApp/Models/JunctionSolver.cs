@@ -415,6 +415,11 @@ namespace FlowSim.Models
 
         /// <summary>
         /// 为指定上游求解器构造"汇流点水位"下游边界条件（<see cref="BoundaryConditionType.StageHydrograph"/>）。
+        /// <para>
+        /// 当汇口水位低于支流出口床底高程时，支流处于自由跌落（无回水）状态，
+        /// 此时强制使用支流初算出口水位（等效于 NormalDepth BC 的结果）代替汇口水位，
+        /// 避免目标水深为负值，导致 Preissmann 不收敛或 Lax CFL 违反。
+        /// </para>
         /// </summary>
         private static Boundary BuildJunctionStageBC(
             Solver upstreamSolver, double[] junctionStage, double dt, int nk)
@@ -428,10 +433,23 @@ namespace FlowSim.Models
             for (int k = 0; k < nkActual; k++)
             {
                 stageTable[k, 0] = k * dt;
-                stageTable[k, 1] = junctionStage[k];
+                double jStage = junctionStage[k];
+                // 当汇口水位低于支流出口床底时，支流为自由跌落状态（无回水影响）。
+                // 使用支流初算出口水位（NormalDepth BC 的结果）替代汇口水位，
+                // 确保目标水深始终 >= MinimumOutletDepth，防止 Preissmann 迭代发散或 Lax CFL 超限。
+                // 取 Depth?[k, lastNode] 以防御性地处理 null（理论上不会为 null，Run() 后必已初始化）。
+                if (jStage < bedAtOutlet + MinimumOutletDepth)
+                {
+                    double freeOutletDepth = Math.Max(
+                        upstreamSolver.Depth?[k, lastNode] ?? MinimumOutletDepth,
+                        MinimumOutletDepth);
+                    jStage = bedAtOutlet + freeOutletDepth;
+                }
+                stageTable[k, 1] = jStage;
             }
 
-            double initDepth = Math.Max(junctionStage[0] - bedAtOutlet, MinimumOutletDepth);
+            // initDepth 基于修正后的第一行水位，确保 >= MinimumOutletDepth
+            double initDepth = stageTable[0, 1] - bedAtOutlet;
 
             return new Boundary(
                 BoundaryConditionType.StageHydrograph,
