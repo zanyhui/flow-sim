@@ -415,6 +415,18 @@ namespace FlowSim.Models
 
         /// <summary>
         /// 为指定上游求解器构造"汇流点水位"下游边界条件（<see cref="BoundaryConditionType.StageHydrograph"/>）。
+        /// <para>
+        /// 汇流点水位（干流首节点水位）可能低于支流出口床底高程（即不存在回水顶托），
+        /// 此时若直接使用汇流点水位作为下游边界，边界残差的目标水深将为负值，
+        /// 导致 Preissmann 牛顿迭代立即发散（"Failed to converge"），
+        /// 以及 Lax 格式因虚节点摩阻坡度极大而产生数值爆炸。
+        /// </para>
+        /// <para>
+        /// 修复策略：以初算求解器出口处的初始水深作为水位下限（stageFloor）。
+        /// 当汇流点水位低于该下限时，边界条件退化为固定正常水深（自由出流近似）；
+        /// 当汇流点水位超过该下限时，使用实际汇流点水位（真实回水顶托）。
+        /// 这既保证目标水深始终非负，又使精算求解器的初始条件与边界条件在 t=0 保持一致。
+        /// </para>
         /// </summary>
         private static Boundary BuildJunctionStageBC(
             Solver upstreamSolver, double[] junctionStage, double dt, int nk)
@@ -422,16 +434,27 @@ namespace FlowSim.Models
             int    lastNode    = upstreamSolver.NumberOfNodes - 1;
             double bedAtOutlet = upstreamSolver.BedProfile![lastNode];
 
+            // 以初算求解器在出口处（t=0）的水深作为水位下限（stageFloor）。
+            // 初算求解器的出口水深来自 GVF 初始化（下游边界取正常水深），
+            // 物理含义为"支流在无回水顶托时的正常水深"，是合理的自由出流近似值。
+            // 当汇流点水位低于此下限时（无顶托），使用正常水深而非极小水深，
+            // 可防止初始条件与边界条件不一致，以及摩阻坡度奇异引发的数值失稳。
+            double initPassDepth = Math.Max(upstreamSolver.Depth![0, lastNode], MinimumOutletDepth);
+            double stageFloor    = bedAtOutlet + initPassDepth;
+
             int nkActual = Math.Min(nk, upstreamSolver.TimeLevel + 1);
             // 存储绝对水位（m），ConditionResidual 将计算 target = stage - BedLevel = depth
             var stageTable = new double[nkActual, 2];   // 列：[0] 时刻(s)，[1] 绝对水位(m)
             for (int k = 0; k < nkActual; k++)
             {
                 stageTable[k, 0] = k * dt;
-                stageTable[k, 1] = junctionStage[k];
+                // 将水位夹紧到 stageFloor，确保目标水深 ≥ initPassDepth（非负且物理合理）。
+                // 有效回水段（汇流点水位 > stageFloor）仍使用真实汇流点水位。
+                stageTable[k, 1] = Math.Max(junctionStage[k], stageFloor);
             }
 
-            double initDepth = Math.Max(junctionStage[0] - bedAtOutlet, MinimumOutletDepth);
+            // 初始水深 = t=0 对应的目标水深，与边界条件在初始时刻保持一致（无跳变）。
+            double initDepth = stageTable[0, 1] - bedAtOutlet;   // ≥ initPassDepth
 
             return new Boundary(
                 BoundaryConditionType.StageHydrograph,
