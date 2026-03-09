@@ -43,6 +43,12 @@ namespace FlowSim
         /// <summary>支流2求解器（仿真后赋值，用于填充支流2结果选项卡）。</summary>
         private Solver? _solver2;
 
+        /// <summary>
+        /// 最近一次 BuildJunctionSolver 调用时是否交换了支流顺序（支流1桩号 > 支流2桩号）。
+        /// 用于在仿真完成后将排序后的 TributarySolvers 正确映射回 UI 中的支流1/支流2。
+        /// </summary>
+        private bool _lastBuildSwapTribs;
+
         /// <summary>图表鼠标悬停十字准线。</summary>
         private ScottPlot.Plottable.Crosshair? _chFlow, _chProfile, _chLong, _chXs;
         private ScottPlot.Plottable.Crosshair? _chJunction;
@@ -462,7 +468,7 @@ namespace FlowSim
                     }
                 };
 
-                Log($"正在运行支流汇流仿真（3段，每段约 {totalSteps} 步）…");
+                Log($"正在运行支流汇流仿真（每段约 {totalSteps} 步）…");
                 Task.Run(() =>
                 {
                     try
@@ -471,8 +477,15 @@ namespace FlowSim
                         Invoke(() =>
                         {
                             _solver  = jSolver.MainSolver;
-                            _solver1 = jSolver.Tributary1Solver;
-                            _solver2 = jSolver.Tributary2Solver;
+                            // _capturedSwapTribs tracks whether UI支流1 is at higher chainage than UI支流2;
+                            // TributarySolvers are sorted by chainage (ascending), so:
+                            //   swapTribs=false → [0]=支流1, [1]=支流2
+                            //   swapTribs=true  → [0]=支流2, [1]=支流1
+                            bool sw = _lastBuildSwapTribs;
+                            _solver1 = jSolver.TributarySolvers.Count > 0
+                                ? jSolver.TributarySolvers[sw ? 1 : 0] : null;
+                            _solver2 = jSolver.TributarySolvers.Count > 1
+                                ? jSolver.TributarySolvers[sw ? 0 : 1] : null;
                             string refinedNote = jSolver.IsRefined ? "（含精算迭代）" : "";
                             string stageNote = "";
                             if (jSolver.JunctionStage != null && jSolver.JunctionStage.Length > 0)
@@ -848,9 +861,37 @@ namespace FlowSim
                 return MakeSolver(chMain);
             }
 
-            return new JunctionSolver(sFirst, sSecond, MainFactory, upstreamMainSolver,
-                                       Trib1RefinedFactory, Trib2RefinedFactory, upMainRefinedFactory,
-                                       midMainSolverFactory, midMainRefinedFactory);
+            // ── 记录本次构建的支流交换状态，供仿真完成后正确映射结果选项卡 ──
+            _lastBuildSwapTribs = swapTribs;
+
+            // ── 构造 TributaryEntry 列表（按汇流桩号排序）──
+            // 注意：JunctionSolver 内部会再次排序；此处顺序仅供阅读。
+            var trib1Entry = new TributaryEntry(sFirst,  chLo > 0 ? chLo : 0, Trib1RefinedFactory);
+            var trib2Entry = new TributaryEntry(sSecond, isThreeSegment ? chHi : (chLo > 0 ? chLo : 0), Trib2RefinedFactory);
+
+            // ── 构造干流段工厂列表 ──
+            // 三段式（不同汇口）：segFactories = [midMainSolverFactory, MainFactory]
+            // 两段式（相同汇口）：segFactories = [MainFactory]
+            Func<Hydrograph, Solver>[] segFactories;
+            Func<Boundary, Solver>?[] refinedSegFactories;
+
+            if (isThreeSegment)
+            {
+                segFactories        = new Func<Hydrograph, Solver>[] { midMainSolverFactory!, MainFactory };
+                refinedSegFactories = new Func<Boundary, Solver>?[]  { midMainRefinedFactory };
+            }
+            else
+            {
+                segFactories        = new Func<Hydrograph, Solver>[] { MainFactory };
+                refinedSegFactories = System.Array.Empty<Func<Boundary, Solver>?>();
+            }
+
+            return new JunctionSolver(
+                tributaries:             new[] { trib1Entry, trib2Entry },
+                segmentFactories:        segFactories,
+                upstreamMainSolver:      upstreamMainSolver,
+                upMainRefinedFactory:    upMainRefinedFactory,
+                refinedSegmentFactories: refinedSegFactories);
         }
 
         private static Hydrograph BuildTriangularHydrograph(double peakFlow, double riseTime, double totalTime)
