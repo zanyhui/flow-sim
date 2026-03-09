@@ -460,7 +460,19 @@ namespace FlowSim
                             _solver  = jSolver.MainSolver;
                             _solver1 = jSolver.Tributary1Solver;
                             _solver2 = jSolver.Tributary2Solver;
-                            Log($"汇流仿真成功完成，干流模拟时长 {_solver!.TotalSimDuration / 3600.0:F1} h。");
+                            string refinedNote = jSolver.IsRefined ? "（含精算迭代）" : "";
+                            string stageNote = "";
+                            if (jSolver.JunctionStage != null && jSolver.JunctionStage.Length > 0)
+                            {
+                                double minZ = jSolver.JunctionStage[0], maxZ = jSolver.JunctionStage[0];
+                                for (int i = 1; i < jSolver.JunctionStage.Length; i++)
+                                {
+                                    if (jSolver.JunctionStage[i] < minZ) minZ = jSolver.JunctionStage[i];
+                                    if (jSolver.JunctionStage[i] > maxZ) maxZ = jSolver.JunctionStage[i];
+                                }
+                                stageNote = $"，汇流点水位 {minZ:F2}～{maxZ:F2} m";
+                            }
+                            Log($"汇流仿真成功完成{refinedNote}，干流模拟时长 {_solver!.TotalSimDuration / 3600.0:F1} h{stageNote}。");
                             UpdateResults();
                             UpdateJunctionChart();
                             UpdateTributaryResults(_solver1, "支流1", plotTrib1Flow, plotTrib1Profile,
@@ -661,6 +673,8 @@ namespace FlowSim
 
             // ── 干流上游段（仅在中游汇流模式下使用） ──
             Solver? upstreamMainSolver = null;
+            // 精算工厂：干流上游段（中游汇流时才非 null）
+            Func<Boundary, Solver>? upMainRefinedFactory = null;
             if (capturedMidJunction && capturedJunctionCh > 0)
             {
                 // 从 _xsIndex3 中筛选出桩号 ≤ 汇流桩号的断面，构建干流上游段
@@ -675,11 +689,33 @@ namespace FlowSim
                 var chUp    = BuildIrregularChannel(upIdx, _xsMeasPts3!, usBUp, dsBUp, capturedUpMainPeak * BaseFlowFraction, "干流上游段");
                 upstreamMainSolver = MakeSolver(chUp);
                 Log($"[干流上游段] 中游汇流模式：汇流断面「{cmbJunctionChainage.SelectedItem}」（{capturedJunctionCh / 1000:F2} km），干流上游段包含 {upIdx.Count} 个断面。");
+
+                // 精算工厂：以汇流点水位作为干流上游段的下游边界，重建求解器
+                double capturedUpInitFlow = capturedUpMainPeak * BaseFlowFraction;
+                upMainRefinedFactory = refinedDsBC =>
+                {
+                    var chRefined = BuildIrregularChannel(upIdx, _xsMeasPts3!, usBUp, refinedDsBC, capturedUpInitFlow, "干流上游段（精算）");
+                    return MakeSolver(chRefined);
+                };
             }
             else if (capturedMidJunction && capturedJunctionCh < 0)
             {
                 throw new InvalidOperationException(
                     "已勾选「支流汇入干流中游」，但尚未选择汇流断面。请先加载干流断面索引文件，然后在下拉框中选择汇流断面。");
+            }
+
+            // ── 精算工厂：支流1（以汇流点水位作为下游边界，重建求解器）──
+            Solver Trib1RefinedFactory(Boundary refinedDsBC)
+            {
+                var chRefined = BuildIrregularChannel(_xsIndex1, _xsMeasPts1, usB1, refinedDsBC, initialFlow1, "支流1（精算）");
+                return MakeSolver(chRefined);
+            }
+
+            // ── 精算工厂：支流2 ──
+            Solver Trib2RefinedFactory(Boundary refinedDsBC)
+            {
+                var chRefined = BuildIrregularChannel(_xsIndex2, _xsMeasPts2, usB2, refinedDsBC, initialFlow2, "支流2（精算）");
+                return MakeSolver(chRefined);
             }
 
             // ── 干流工厂（下游段，或当无中游汇流时为全程干流） ──
@@ -721,7 +757,8 @@ namespace FlowSim
                 return MakeSolver(chMain);
             }
 
-            return new JunctionSolver(s1, s2, MainFactory, upstreamMainSolver);
+            return new JunctionSolver(s1, s2, MainFactory, upstreamMainSolver,
+                                      Trib1RefinedFactory, Trib2RefinedFactory, upMainRefinedFactory);
         }
 
         private static Hydrograph BuildTriangularHydrograph(double peakFlow, double riseTime, double totalTime)
