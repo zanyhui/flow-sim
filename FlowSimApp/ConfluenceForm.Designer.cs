@@ -274,12 +274,45 @@ namespace FlowSim
             txtLog.ForeColor  = Color.Lime;
             txtLog.Font       = new Font("Consolas", 8);
 
+            // ── GroupBox：旁侧入流（干流） ──
+            var grpLat = new GroupBox { Text = "旁侧入流（干流）", AutoSize = true, Width = grpWidth, Padding = new Padding(5) };
+            var tblLat = MakeTable(4, 2);
+            tblLat.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+            tblLat.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+
+            chkEnableLateral.Text     = "启用旁侧入流";
+            chkEnableLateral.AutoSize = true;
+            chkEnableLateral.Dock     = DockStyle.Fill;
+            chkEnableLateral.CheckedChanged += chkEnableLateral_CheckedChanged;
+            ConfigNum(numLateralPeakFlow, 200, 1, 1000000, 0, 100);
+            ConfigNum(numLateralRiseTime, 3, 0.1m, 100, 1, 1m);
+
+            // 使能说明标签
+            lblLateralInfo.Text      = "ℹ 旁侧入流沿干流全长均匀分布；采用三角形洪水过程线，与支流参数设置方式相同。";
+            lblLateralInfo.AutoSize  = true;
+            lblLateralInfo.Dock      = DockStyle.Fill;
+            lblLateralInfo.ForeColor = System.Drawing.Color.SteelBlue;
+            lblLateralInfo.Font      = new System.Drawing.Font("Segoe UI", 8.25f, System.Drawing.FontStyle.Italic);
+
+            tblLat.Controls.Add(chkEnableLateral);
+            tblLat.SetColumnSpan(chkEnableLateral, 2);
+            AddRow2(tblLat, "峰值流量（m³/s）：", numLateralPeakFlow);
+            AddRow2(tblLat, "起涨时间（小时）：", numLateralRiseTime);
+            tblLat.Controls.Add(lblLateralInfo);
+            tblLat.SetColumnSpan(lblLateralInfo, 2);
+            grpLat.Controls.Add(tblLat);
+
+            // 初始状态：旁侧入流未启用，子控件禁用
+            numLateralPeakFlow.Enabled = false;
+            numLateralRiseTime.Enabled = false;
+
             // 将所有左侧控件加入 leftFlow（从上到下）
             leftFlow.Controls.Add(grpT1);
             leftFlow.Controls.Add(grpT2);
             leftFlow.Controls.Add(grpMC);
             leftFlow.Controls.Add(grpBC);
             leftFlow.Controls.Add(grpDS);
+            leftFlow.Controls.Add(grpLat);
             leftFlow.Controls.Add(grpSolver);
             leftFlow.Controls.Add(pnlButtons);
             leftFlow.Controls.Add(txtLog);
@@ -543,6 +576,12 @@ namespace FlowSim
         private NumericUpDown numDsDepth  = new NumericUpDown();
         private Label         lblDsDepthLabel = new Label();  // 水深标签（随边界类型动态更新）
         private Label         lblDsBcInfo    = new Label();   // 常驻说明（解释正常水深≠坡度）
+
+        // 旁侧入流
+        private CheckBox      chkEnableLateral  = new CheckBox();
+        private NumericUpDown numLateralPeakFlow = new NumericUpDown();
+        private NumericUpDown numLateralRiseTime = new NumericUpDown();
+        private Label         lblLateralInfo    = new Label();
 
         // 求解器
         private ComboBox      cmbSolverMethod = new ComboBox();

@@ -150,6 +150,16 @@ namespace FlowSim
                 : "ℹ 固定水深：出口水深在整个仿真中保持为所填数值（m），不随流量变化。";
         }
 
+        /// <summary>
+        /// 旁侧入流启用/禁用切换事件：根据复选框状态更新子控件的可用性。
+        /// </summary>
+        private void chkEnableLateral_CheckedChanged(object sender, EventArgs e)
+        {
+            bool enabled = chkEnableLateral.Checked;
+            numLateralPeakFlow.Enabled = enabled;
+            numLateralRiseTime.Enabled = enabled;
+        }
+
 
 
         // ══════════════════════════════════════════════════════════════
@@ -535,6 +545,11 @@ namespace FlowSim
             var ch2    = BuildIrregularChannel(_xsIndex2, _xsMeasPts2, usB2, dsB2, initialFlow2, "支流2");
             var s2     = MakeSolver(ch2);
 
+            // ── 旁侧入流（干流）：在 UI 线程读取控件值，供后台线程使用 ──
+            bool   capturedLatEnabled  = chkEnableLateral.Checked;
+            double capturedLatPeak     = (double)numLateralPeakFlow.Value;
+            double capturedLatRiseTime = (double)numLateralRiseTime.Value * 3600;
+
             // ── 干流工厂 ──
             Solver MainFactory(Hydrograph combinedHydro)
             {
@@ -542,6 +557,15 @@ namespace FlowSim
                 var dsBMain = new Boundary(dsBcType, 0, 0, dsDepth);
                 var chMain  = BuildIrregularChannel(_xsIndex3, _xsMeasPts3, usBMain, dsBMain,
                     initialFlow1 + initialFlow2, "干流");
+
+                // 如果启用了旁侧入流，将其附加到干流信道
+                if (capturedLatEnabled && capturedLatPeak > 0 && capturedLatRiseTime > 0)
+                {
+                    var latHydro = BuildTriangularHydrograph(capturedLatPeak, capturedLatRiseTime, simTime);
+                    chMain.SetLateralInflow(latHydro);
+                    Log($"[干流] 旁侧入流已启用：峰值 {capturedLatPeak:F0} m³/s，起涨时间 {capturedLatRiseTime / 3600:F1} h");
+                }
+
                 return MakeSolver(chMain);
             }
 

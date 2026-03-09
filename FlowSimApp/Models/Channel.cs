@@ -71,6 +71,13 @@ namespace FlowSim.Models
         private double[]? _coordsChainages;  // 对应坐标点的桩号（m）
 
         /// <summary>
+        /// 旁侧入流总流量过程线 Q_lat(t)（m³/s）。
+        /// 为 null 时表示无旁侧入流。
+        /// 单位长度旁侧入流 q_lat = Q_lat(t) / Length（m²/s），由求解器在计算时调用。
+        /// </summary>
+        public Hydrograph? LateralInflow { get; private set; }
+
+        /// <summary>
         /// 构造河道对象，设置上下游边界和基本参数。
         /// </summary>
         /// <param name="upstreamBoundary">上游边界条件。</param>
@@ -119,6 +126,33 @@ namespace FlowSim.Models
                 throw new ArgumentException("coords rows and chainages must have same length.");
             _coords = coords;
             _coordsChainages = chainages;
+        }
+
+        /// <summary>
+        /// 设置旁侧入流总流量过程线 Q_lat(t)（m³/s）。
+        /// <para>
+        /// 旁侧入流沿河道均匀分布，单位长度入流量 q_lat = Q_lat(t) / Length（m²/s）。
+        /// 对圣维南方程的连续性方程，<see cref="GetLateralInflowPerLength"/> 返回 q_lat；
+        /// 求解器在计算连续性残差或面积更新时调用该值。
+        /// </para>
+        /// </summary>
+        /// <param name="lateralInflow">旁侧入流总流量过程线。</param>
+        public void SetLateralInflow(Hydrograph lateralInflow)
+            => LateralInflow = lateralInflow;
+
+        /// <summary>
+        /// 返回指定时刻的单位长度旁侧入流量 q_lat（m²/s）。
+        /// <para>
+        /// q_lat = Q_lat(t) / Length（旁侧入流总量 / 河道总长度）。
+        /// 当 <see cref="LateralInflow"/> 为 null 或河道长度为零时返回 0。
+        /// </para>
+        /// </summary>
+        /// <param name="t">当前时刻（秒）。</param>
+        /// <returns>单位长度旁侧入流量（m²/s），非负。</returns>
+        public double GetLateralInflowPerLength(double t)
+        {
+            if (LateralInflow == null || Length < 1.0) return 0.0;
+            return Math.Max(0.0, LateralInflow.GetAt(t) / Length);
         }
 
         /// <summary>

@@ -211,7 +211,9 @@ namespace FlowSim.Models
                 double Se_ip1 = SeAt(TimeLevel - 1, i + 1);
 
                 // 用 Lax-Friedrichs 格式更新面积和流量
-                double newA = NewArea(A_im1, A_ip1, Q_im1, Q_ip1);
+                double t = (TimeLevel - 0.5) * TimeStep;       // 时步中点时刻
+                double qLat = Channel.GetLateralInflowPerLength(t); // 旁侧入流（m²/s）
+                double newA = NewArea(A_im1, A_ip1, Q_im1, Q_ip1, qLat);
                 double newQ = NewFlow(A_im1, A_ip1, Q_im1, Q_ip1, Y_im1, Y_ip1, Se_im1, Se_ip1);
 
                 // 将新过水面积反算为水深（通过 Brent 方法反查面积-水深关系）
@@ -233,11 +235,13 @@ namespace FlowSim.Models
         private void ComputeUpstreamNode()
         {
             var (ghostA, ghostQ, ghostY, ghostSe) = UsGhostNode();
+            double tMid = (TimeLevel - 0.5) * TimeStep;
+            double qLat = Channel.GetLateralInflowPerLength(tMid);
 
             if (Channel.UpstreamBoundary.IsFlowDependent)
             {
                 // 流量类边界：Lax 更新 A（= 连续性方程），Q 从过程线或正常流公式获取
-                double newA  = NewArea(ghostA, AreaAt(TimeLevel - 1, 1), ghostQ, FlowAt(TimeLevel - 1, 1));
+                double newA  = NewArea(ghostA, AreaAt(TimeLevel - 1, 1), ghostQ, FlowAt(TimeLevel - 1, 1), qLat);
                 double t     = TimeLevel * TimeStep;
                 double hGuess = AreaToDepth(0, newA);   // 由面积反算水深
 
@@ -272,11 +276,13 @@ namespace FlowSim.Models
         {
             int last = NumberOfNodes - 1;
             var (ghostA, ghostQ, ghostY, ghostSe) = DsGhostNode();
+            double tMid = (TimeLevel - 0.5) * TimeStep;
+            double qLat = Channel.GetLateralInflowPerLength(tMid);
 
             if (Channel.DownstreamBoundary.IsFlowDependent)
             {
                 // 流量类边界：Lax 更新 A，Q = -ConditionResidual(...) 中的目标值
-                double newA   = NewArea(AreaAt(TimeLevel - 1, last - 1), ghostA, FlowAt(TimeLevel - 1, last - 1), ghostQ);
+                double newA   = NewArea(AreaAt(TimeLevel - 1, last - 1), ghostA, FlowAt(TimeLevel - 1, last - 1), ghostQ, qLat);
                 double t      = TimeLevel * TimeStep;
                 double hGuess = AreaToDepth(last, newA);
                 // ConditionResidual = Q - target，故 Q = target = -(-Q + target) + Q？
@@ -304,20 +310,21 @@ namespace FlowSim.Models
         }
 
         /// <summary>
-        /// Lax-Friedrichs 连续性格式：更新过水面积。
-        /// 公式：A_i^新 = 0.5*(A_{i-1}+A_{i+1}) - Δt/(2Δx)*(Q_{i+1}-Q_{i-1})
-        /// 第一项为空间平均（引入数值耗散），第二项为流量散度修正。
+        /// Lax-Friedrichs 连续性格式：更新过水面积（含旁侧入流源项）。
+        /// 公式：A_i^新 = 0.5*(A_{i-1}+A_{i+1}) - Δt/(2Δx)*(Q_{i+1}-Q_{i-1}) + q_lat·Δt
+        /// 第一项为空间平均（引入数值耗散），第二项为流量散度修正，第三项为旁侧入流源项。
         /// </summary>
         /// <param name="A_im1">旧时层节点 i-1 处的过水面积（m²）。</param>
         /// <param name="A_ip1">旧时层节点 i+1 处的过水面积（m²）。</param>
         /// <param name="Q_im1">旧时层节点 i-1 处的流量（m³/s）。</param>
         /// <param name="Q_ip1">旧时层节点 i+1 处的流量（m³/s）。</param>
+        /// <param name="qLat">单位长度旁侧入流量 q_lat（m²/s），默认 0（无旁侧入流）。</param>
         /// <returns>新时层节点 i 处的过水面积（m²）。</returns>
-        private double NewArea(double A_im1, double A_ip1, double Q_im1, double Q_ip1)
+        private double NewArea(double A_im1, double A_ip1, double Q_im1, double Q_ip1, double qLat = 0)
         {
             double avgA = LaxCellAvg(A_ip1, A_im1);      // 0.5*(A_{i+1}+A_{i-1})
             double dQ_dx = LaxSpatialDiff(Q_ip1, Q_im1); // (Q_{i+1}-Q_{i-1})/(2Δx)
-            return avgA - dQ_dx * TimeStep;               // A_new = avgA - (dQ/dx)·Δt
+            return avgA - dQ_dx * TimeStep + qLat * TimeStep;  // A_new = avgA - (dQ/dx)·Δt + q_lat·Δt
         }
 
         /// <summary>

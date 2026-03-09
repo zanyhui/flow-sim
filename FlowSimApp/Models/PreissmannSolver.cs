@@ -316,9 +316,10 @@ namespace FlowSim.Models
         /// <summary>
         /// 单元 i（节点 i～i+1 之间）的连续性方程残差。
         /// <para>
-        /// 圣维南连续性方程：∂A/∂t + ∂Q/∂x = 0。
+        /// 含旁侧入流的圣维南连续性方程：∂A/∂t + ∂Q/∂x = q_lat。
         /// Preissmann 离散：(A_新平均 - A_旧平均)/Δt + θ·(Q_{i+1}^新-Q_i^新)/Δx
-        ///                  + (1-θ)·(Q_{i+1}^旧-Q_i^旧)/Δx = 0。
+        ///                  + (1-θ)·(Q_{i+1}^旧-Q_i^旧)/Δx - q_lat = 0。
+        /// 其中 q_lat 为单位长度旁侧入流量（m²/s），取时步中点值。
         /// </para>
         /// </summary>
         private double ContinuityResidual(int i)
@@ -333,7 +334,11 @@ namespace FlowSim.Models
                 k1_i1: FlowAt(TimeLevel, i + 1), k1_i: FlowAt(TimeLevel, i),
                 k_i1: FlowAt(TimeLevel - 1, i + 1), k_i: FlowAt(TimeLevel - 1, i));
 
-            return dA_dt + dQ_dx;
+            // 旁侧入流源项：单位长度流量 q_lat（取时步中点值）
+            double tMid = (TimeLevel - 0.5) * TimeStep;
+            double qLat = Channel.GetLateralInflowPerLength(tMid);
+
+            return dA_dt + dQ_dx - qLat;
         }
 
         /// <summary>
