@@ -582,7 +582,11 @@ namespace FlowSim
                 double initFlow,
                 string label)
             {
-                double chLength = xsIdx[xsIdx.Count - 1].chainage;
+                // 归一化桩号：以第一个断面的桩号为原点，将绝对桩号转换为河段局部坐标。
+                // 这使得子河段（如干流中游段、干流下游段）的河道长度等于实际段长，
+                // 而非错误地使用最末断面的绝对桩号。
+                double chOffset = xsIdx[0].chainage;
+                double chLength = xsIdx[xsIdx.Count - 1].chainage - chOffset;
                 double usBedLv  = xsPts.TryGetValue(xsIdx[0].name, out var fPts) ? fPts.z.Min() : 0;
                 double dsBedLv  = xsPts.TryGetValue(xsIdx[xsIdx.Count - 1].name, out var lPts) ? lPts.z.Min() : 0;
 
@@ -604,11 +608,11 @@ namespace FlowSim
                         Log($"[{label}] 警告：断面「{rec.name}」在测点文件中未找到，已跳过。");
                         continue;
                     }
-                    chainageList.Add(rec.chainage);
+                    chainageList.Add(rec.chainage - chOffset);
                     sectionList.Add(new IrregularSection(pts.x, pts.z, rec.n));
                     if (rec.x.HasValue && rec.y.HasValue)
                     {
-                        coordXs.Add(rec.x.Value); coordYs.Add(rec.y.Value); coordChs.Add(rec.chainage);
+                        coordXs.Add(rec.x.Value); coordYs.Add(rec.y.Value); coordChs.Add(rec.chainage - chOffset);
                     }
                 }
 
