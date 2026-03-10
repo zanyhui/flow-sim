@@ -95,7 +95,7 @@ namespace FlowSim.Models
 
                 if (verbose >= 1) Console.WriteLine($"\n> Time level #{TimeLevel}");
 
-                AdvanceTimeStep();
+                AdvanceWithSubStepping();
 
                 double maxCfl = CheckCflAll();
                 MaxCflPerStep[TimeLevel] = maxCfl;
@@ -112,15 +112,109 @@ namespace FlowSim.Models
         // ---- 时间步推进 ----
 
         /// <summary>
-        /// 推进一个时间步：计算所有界面的 HLLC 通量，应用守恒更新，处理边界条件。
+        /// 推进一个用户可见的时间步，如 CFL 条件要求则自动细分为若干子步（CFL 自适应子步）。
+        /// <para>
+        /// 算法：
+        /// 1. 根据当前时层的最大波速估算安全子步长；
+        /// 2. 若需要多于 1 个子步，保存 TimeLevel-1 行数据，逐子步推进，
+        ///    最后将结果写入 TimeLevel 行并还原 TimeLevel-1 历史数据；
+        /// 3. 若只需 1 个子步，直接调用 <see cref="AdvanceTimeStep(double, double)"/>。
+        /// </para>
         /// </summary>
-        private void AdvanceTimeStep()
+        private void AdvanceWithSubStepping()
+        {
+            // 根据当前状态（TimeLevel-1）估算最大物理波速
+            double maxWave = ComputeMaxWaveSpeed();
+
+            // 安全子步长：取 90% CFL 约束（防止紧边界情况）
+            int nSub = 1;
+            if (maxWave > 0)
+            {
+                double dtSafe = 0.9 * SpatialStep / maxWave;
+                nSub = (int)Math.Ceiling(TimeStep / dtSafe);
+                if (nSub < 1) nSub = 1;
+            }
+
+            double tBase0 = (TimeLevel - 1) * TimeStep;
+
+            if (nSub == 1)
+            {
+                AdvanceTimeStep(TimeStep, tBase0);
+                return;
+            }
+
+            // 子步推进：临时借用 TimeLevel-1 行存储中间状态，完成后还原
+            int n = NumberOfNodes;
+            var savedDepth = new double[n];
+            var savedFlow  = new double[n];
+            for (int i = 0; i < n; i++)
+            {
+                savedDepth[i] = Depth![TimeLevel - 1, i];
+                savedFlow[i]  = Flow![TimeLevel - 1, i];
+            }
+
+            double dtSub = TimeStep / nSub;
+            for (int sub = 0; sub < nSub; sub++)
+            {
+                double tBase = tBase0 + sub * dtSub;
+                AdvanceTimeStep(dtSub, tBase);
+
+                // 若不是最后一子步，把当前输出（TimeLevel）复制回 TimeLevel-1，
+                // 作为下一子步的起始状态
+                if (sub < nSub - 1)
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        Depth![TimeLevel - 1, i] = Depth[TimeLevel, i];
+                        Flow![TimeLevel - 1, i]  = Flow[TimeLevel, i];
+                    }
+                }
+            }
+
+            // 还原 TimeLevel-1 行的原始历史数据（子步执行完毕，TimeLevel 已含最终结果）
+            for (int i = 0; i < n; i++)
+            {
+                Depth![TimeLevel - 1, i] = savedDepth[i];
+                Flow![TimeLevel - 1, i]  = savedFlow[i];
+            }
+        }
+
+        /// <summary>
+        /// 计算当前时层（TimeLevel-1）所有节点的最大物理波速 max(|V ± c|)。
+        /// 用于 <see cref="AdvanceWithSubStepping"/> 中估算安全子步长。
+        /// </summary>
+        private double ComputeMaxWaveSpeed()
+        {
+            double maxWave = 0;
+            int k = TimeLevel - 1;
+            for (int i = 0; i < NumberOfNodes; i++)
+            {
+                double A = AreaAt(k, i);
+                if (A < 1e-10) continue;
+                double Q = FlowAt(k, i);
+                double T = Channel.TopWidth(i, WaterLevelAt(k, i));
+                double D = T > 1e-10 ? A / T : 0;
+                double c = Math.Sqrt(Hydraulics.G * Math.Max(D, 0));
+                double V = Q / A;
+                double w = Math.Max(Math.Abs(V + c), Math.Abs(V - c));
+                if (w > maxWave) maxWave = w;
+            }
+            return maxWave;
+        }
+
+        /// <summary>
+        /// 推进一个时间步（长度为 <paramref name="dt"/>，起始绝对时刻为 <paramref name="tBase"/>）：
+        /// 计算所有界面的 HLLC 通量，应用守恒更新，处理边界条件。
+        /// 读取状态来自 <c>Depth/Flow[TimeLevel-1, :]</c>，结果写入 <c>Depth/Flow[TimeLevel, :]</c>。
+        /// </summary>
+        /// <param name="dt">本步时间步长（秒），子步时传入 <c>TimeStep/nSub</c>。</param>
+        /// <param name="tBase">本步起始绝对时刻（秒）。</param>
+        private void AdvanceTimeStep(double dt, double tBase)
         {
             int    n    = NumberOfNodes;
-            double dt   = TimeStep;
             double dx   = SpatialStep;
-            double tCur = TimeLevel * dt;          // 新时层时刻
-            double tMid = (TimeLevel - 0.5) * dt;  // 旧→新半步时刻（用于旁侧流量）
+            double tCur = tBase + dt;          // 本步结束时刻
+            double tMid = tBase + 0.5 * dt;    // 本步中间时刻（用于旁侧流量）
             double qLat = Channel.GetNetLateralFlowPerLength(tMid);
 
             // 计算所有内部界面（节点 0~1, 1~2, …, N-2~N-1）处的 HLLC 通量
