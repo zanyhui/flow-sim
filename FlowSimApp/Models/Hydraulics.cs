@@ -22,6 +22,12 @@ namespace FlowSim.Models
         public const double G = 9.80665;
 
         /// <summary>
+        /// 干断面输水能力阈值：输水能力 K 小于此值时视为干断面（无水流），
+        /// 摩阻坡度计算返回 0 以防止除零产生 NaN/Inf。
+        /// </summary>
+        private const double DrySectionThreshold = 1e-10;
+
+        /// <summary>
         /// 计算曼宁输水能力 K = A * R^(2/3) / n。
         /// <para>
         /// 曼宁公式：Q = K * sqrt(S0)，其中 K 综合了断面面积与糙率的影响。
@@ -63,6 +69,7 @@ namespace FlowSim.Models
         /// <returns>摩阻坡度 Sf（无量纲）。</returns>
         public static double FrictionSlope(double Q, double K)
         {
+            if (K < DrySectionThreshold) return 0;   // 干断面（K≈0）时无摩阻；防止除零产生 NaN/Inf
             return Q * Math.Abs(Q) / (K * K);
         }
 
@@ -78,6 +85,7 @@ namespace FlowSim.Models
         /// <returns>dSf/dA 的值。</returns>
         public static double DFrictionSlope_DA(double Q, double K, double dK_dA)
         {
+            if (K < DrySectionThreshold) return 0;   // 干断面时返回 0，与 FrictionSlope 保持一致
             return -2.0 * FrictionSlope(Q, K) * (dK_dA / K);
         }
 
@@ -89,6 +97,7 @@ namespace FlowSim.Models
         /// <returns>dSf/dQ 的值。</returns>
         public static double DFrictionSlope_DQ(double Q, double K)
         {
+            if (K < DrySectionThreshold) return 0;   // 干断面时返回 0
             return 2.0 * Math.Abs(Q) / (K * K);
         }
 

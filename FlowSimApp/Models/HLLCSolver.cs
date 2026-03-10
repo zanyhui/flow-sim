@@ -320,8 +320,21 @@ namespace FlowSim.Models
             double newQ = Q_i - dt / dx * (fQ_right - fQ_left)
                                + Hydraulics.G * A_i * (S0 - Sf) * dt;
 
-            Depth![TimeLevel, i] = AreaToDepth(i, newA);
-            Flow![TimeLevel, i]  = newQ;
+            // 正定性保持：面积不得为负；若面积为零（干断面），同时将流量归零，
+            // 防止后续步骤出现 Q≠0、A=0 的矛盾状态，导致波速趋于无穷大或 NaN。
+            // Positivity preservation: area must not be negative; if area is zero (dry section),
+            // also zero out the flow to prevent the contradictory Q≠0, A=0 state that
+            // would cause wave speed to blow up or produce NaN in subsequent steps.
+            if (newA <= 0)
+            {
+                Depth![TimeLevel, i] = 0;
+                Flow![TimeLevel, i]  = 0;
+            }
+            else
+            {
+                Depth![TimeLevel, i] = AreaToDepth(i, newA);
+                Flow![TimeLevel, i]  = newQ;
+            }
         }
 
         /// <summary>
