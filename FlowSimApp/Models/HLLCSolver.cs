@@ -43,6 +43,9 @@ namespace FlowSim.Models
         /// <summary>每个时步的最大 CFL 数数组 [时间层]（仿真完成后可读取）。</summary>
         public double[]? MaxCflPerStep { get; private set; }
 
+        /// <summary>最近一次时步推进所用的子步数（自适应子步时 &gt; 1）。</summary>
+        private int _lastNSub = 1;
+
         /// <summary>
         /// CFL 超限警告回调（可选）。
         /// 当某步 CFL 在 1 到 <see cref="CflWarningThreshold"/> 之间时触发，
@@ -111,40 +114,29 @@ namespace FlowSim.Models
 
         // ---- 时间步推进 ----
 
+        /// <summary>CFL 安全系数：子步推进时要求每子步 CFL ≤ 此值（0.9 = 90% Courant 限制）。</summary>
+        private const double CflSafetyFactor = 0.9;
+
+        /// <summary>自适应子步的最大子步数上限（2 的整次幂，方便与重试次数对应）。</summary>
+        private const int MaxNSub = 4096;
+
         /// <summary>
-        /// 推进一个用户可见的时间步，如 CFL 条件要求则自动细分为若干子步（CFL 自适应子步）。
+        /// 推进一个用户可见的时间步，自适应地细分为若干子步以满足 CFL 稳定性条件。
         /// <para>
-        /// 算法：
-        /// 1. 根据当前时层的最大波速估算安全子步长；
-        /// 2. 若需要多于 1 个子步，保存 TimeLevel-1 行数据，逐子步推进，
-        ///    最后将结果写入 TimeLevel 行并还原 TimeLevel-1 历史数据；
-        /// 3. 若只需 1 个子步，直接调用 <see cref="AdvanceTimeStep(double, double)"/>。
+        /// 算法（自适应重试）：
+        /// 1. 保存 TimeLevel-1 行的初始状态；
+        /// 2. 根据当前时层波速估算初始 nSub；
+        /// 3. 执行 nSub 个子步，将结果写入 TimeLevel 行；
+        /// 4. 检查结果状态的每子步 CFL（max|V±c| · dtSub / Δx）；
+        ///    若 &gt; CflSafetyFactor，则恢复初始状态并以更大的 nSub 重试，直至稳定或达到上限。
         /// </para>
         /// </summary>
         private void AdvanceWithSubStepping()
         {
-            // 根据当前状态（TimeLevel-1）估算最大物理波速
-            double maxWave = ComputeMaxWaveSpeed();
-
-            // 安全子步长：取 90% CFL 约束（防止紧边界情况）
-            int nSub = 1;
-            if (maxWave > 0)
-            {
-                double dtSafe = 0.9 * SpatialStep / maxWave;
-                nSub = (int)Math.Ceiling(TimeStep / dtSafe);
-                if (nSub < 1) nSub = 1;
-            }
-
+            int    n      = NumberOfNodes;
             double tBase0 = (TimeLevel - 1) * TimeStep;
 
-            if (nSub == 1)
-            {
-                AdvanceTimeStep(TimeStep, tBase0);
-                return;
-            }
-
-            // 子步推进：临时借用 TimeLevel-1 行存储中间状态，完成后还原
-            int n = NumberOfNodes;
+            // ── 1. 保存 TimeLevel-1 行（初始状态），用于自适应重试 ──
             var savedDepth = new double[n];
             var savedFlow  = new double[n];
             for (int i = 0; i < n; i++)
@@ -153,13 +145,69 @@ namespace FlowSim.Models
                 savedFlow[i]  = Flow![TimeLevel - 1, i];
             }
 
+            // ── 2. 根据当前状态估算初始 nSub ──
+            double maxWave = ComputeMaxWaveSpeedAt(TimeLevel - 1);
+            int nSub = 1;
+            if (maxWave > 0)
+            {
+                double dtSafe = CflSafetyFactor * SpatialStep / maxWave;
+                nSub = Math.Max(1, (int)Math.Ceiling(TimeStep / dtSafe));
+            }
+
+            // ── 3. 自适应重试循环 ──
+            // 最多重试 log₂(MaxNSub) 次，即每次 nSub 至少翻倍时能在 log₂(MaxNSub) 步内达到上限
+            int maxAttempts = (int)Math.Ceiling(Math.Log(MaxNSub, 2));
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
+            {
+                // 恢复 TimeLevel-1 到初始状态（每次重试前必须重置）
+                for (int i = 0; i < n; i++)
+                {
+                    Depth![TimeLevel - 1, i] = savedDepth[i];
+                    Flow![TimeLevel - 1, i]  = savedFlow[i];
+                }
+
+                // 执行 nSub 个子步
+                DoSubSteps(nSub, tBase0, savedDepth, savedFlow);
+
+                // 检查结果状态的每子步 CFL
+                double maxWaveNew  = ComputeMaxWaveSpeedAt(TimeLevel);
+                double dtSub       = TimeStep / nSub;
+                double cflPerSub   = maxWaveNew > 0 ? maxWaveNew * dtSub / SpatialStep : 0;
+
+                _lastNSub = nSub;
+
+                // 浮点比较容差：避免因计算精度导致 cflPerSub 略超 CflSafetyFactor 而触发不必要的重试
+                if (cflPerSub <= CflSafetyFactor * (1.0 + 1e-9) || nSub >= MaxNSub)
+                    return;  // 稳定，或已达到子步上限
+
+                // 根据结果波速重新估算所需 nSub，并重试
+                int nSubNew = (int)Math.Ceiling(maxWaveNew * TimeStep / (CflSafetyFactor * SpatialStep));
+                nSub = Math.Min(Math.Max(nSubNew, nSub + 1), MaxNSub);
+            }
+        }
+
+        /// <summary>
+        /// 执行 <paramref name="nSub"/> 个子步，将结果写入 <c>Depth/Flow[TimeLevel, :]</c>。
+        /// 每个子步从 <c>TimeLevel-1</c> 行读取状态，利用 <c>TimeLevel</c> 行暂存中间状态。
+        /// 子步全部完成后，<c>TimeLevel-1</c> 行恢复为 <paramref name="initDepth"/>/<paramref name="initFlow"/>。
+        /// </summary>
+        private void DoSubSteps(int nSub, double tBase0, double[] initDepth, double[] initFlow)
+        {
+            if (nSub == 1)
+            {
+                AdvanceTimeStep(TimeStep, tBase0);
+                return;
+            }
+
+            int    n    = NumberOfNodes;
             double dtSub = TimeStep / nSub;
+
             for (int sub = 0; sub < nSub; sub++)
             {
                 double tBase = tBase0 + sub * dtSub;
                 AdvanceTimeStep(dtSub, tBase);
 
-                // 若不是最后一子步，把当前输出（TimeLevel）复制回 TimeLevel-1，
+                // 若不是最后一子步，将本子步结果（TimeLevel 行）复制到 TimeLevel-1 行，
                 // 作为下一子步的起始状态
                 if (sub < nSub - 1)
                 {
@@ -171,28 +219,26 @@ namespace FlowSim.Models
                 }
             }
 
-            // 还原 TimeLevel-1 行的原始历史数据（子步执行完毕，TimeLevel 已含最终结果）
+            // 还原 TimeLevel-1 行为原始历史数据
             for (int i = 0; i < n; i++)
             {
-                Depth![TimeLevel - 1, i] = savedDepth[i];
-                Flow![TimeLevel - 1, i]  = savedFlow[i];
+                Depth![TimeLevel - 1, i] = initDepth[i];
+                Flow![TimeLevel - 1, i]  = initFlow[i];
             }
         }
 
         /// <summary>
-        /// 计算当前时层（TimeLevel-1）所有节点的最大物理波速 max(|V ± c|)。
-        /// 用于 <see cref="AdvanceWithSubStepping"/> 中估算安全子步长。
+        /// 计算指定时间层 <paramref name="level"/> 所有节点的最大物理波速 max(|V ± c|)。
         /// </summary>
-        private double ComputeMaxWaveSpeed()
+        private double ComputeMaxWaveSpeedAt(int level)
         {
             double maxWave = 0;
-            int k = TimeLevel - 1;
             for (int i = 0; i < NumberOfNodes; i++)
             {
-                double A = AreaAt(k, i);
+                double A = AreaAt(level, i);
                 if (A < 1e-10) continue;
-                double Q = FlowAt(k, i);
-                double T = Channel.TopWidth(i, WaterLevelAt(k, i));
+                double Q = FlowAt(level, i);
+                double T = Channel.TopWidth(i, WaterLevelAt(level, i));
                 double D = T > 1e-10 ? A / T : 0;
                 double c = Math.Sqrt(Hydraulics.G * Math.Max(D, 0));
                 double V = Q / A;
@@ -469,13 +515,20 @@ namespace FlowSim.Models
         // ---- CFL 检验 ----
 
         /// <summary>
-        /// 检验所有节点的 CFL 稳定性条件：|V ± c| ≤ Δx/Δt。
+        /// 检验所有节点的 CFL 稳定性条件：|V ± c| · dtSub / Δx ≤ 阈值。
+        /// <para>
+        /// 使用等效子步时间步长 dtSub = TimeStep / _lastNSub 计算 CFL，
+        /// 从而正确反映自适应子步推进的实际稳定性，而非用户设置的原始步长。
+        /// </para>
         /// </summary>
-        /// <returns>本时步所有节点中最大的 CFL 数。</returns>
+        /// <returns>本时步所有节点中最大的每子步 CFL 数。</returns>
         private double CheckCflAll()
         {
             double stepMaxCfl = 0;
             int    maxNode    = 0;
+
+            // 等效子步时间步长：自适应子步后反映实际稳定性
+            double effectiveDt = TimeStep / _lastNSub;
 
             for (int i = 0; i < NumberOfNodes; i++)
             {
@@ -489,7 +542,7 @@ namespace FlowSim.Models
                 double c = Math.Sqrt(Hydraulics.G * Math.Max(D, 0));
 
                 double maxCelerity = Math.Max(Math.Abs(V + c), Math.Abs(V - c));
-                double cfl = maxCelerity / NumCelerity;
+                double cfl = maxCelerity * effectiveDt / SpatialStep;
                 if (cfl > stepMaxCfl) { stepMaxCfl = cfl; maxNode = i; }
             }
 
