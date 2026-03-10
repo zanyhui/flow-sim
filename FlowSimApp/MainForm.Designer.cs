@@ -382,13 +382,13 @@ namespace FlowSim
             pnlSolver.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             pnlSolver.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
 
-            // 格式选择下拉框；选 Lax 时禁用 θ/tolerance/maxIter 参数（仅 Preissmann 使用）
-            cmbSolverMethod.Items.AddRange(new[] { "Preissmann", "Lax-Friedrichs" });
+            // 格式选择下拉框；仅 Preissmann 需要 θ/tolerance/maxIter 参数
+            cmbSolverMethod.Items.AddRange(new[] { "Preissmann", "Lax-Friedrichs", "HLLC" });
             cmbSolverMethod.SelectedIndex = 0;
             cmbSolverMethod.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbSolverMethod.SelectedIndexChanged += (s, e) =>
             {
-                bool isPreissmann = cmbSolverMethod.SelectedIndex == 0;
+                bool isPreissmann = cmbSolverMethod.SelectedItem?.ToString() == "Preissmann";
                 numTheta.Enabled     = isPreissmann;
                 numTolerance.Enabled = isPreissmann;
                 numMaxIter.Enabled   = isPreissmann;

@@ -1,0 +1,418 @@
+using System;
+using System.Diagnostics;
+
+namespace FlowSim.Models
+{
+    /// <summary>
+    /// HLLC（Harten-Lax-van Leer-Contact）Riemann 求解器，用于一维圣维南方程组。
+    /// <para>
+    /// 算法概述：
+    /// <list type="bullet">
+    ///   <item>
+    ///     HLLC 是一种 Godunov 型有限体积格式，在 HLL（两波）格式的基础上
+    ///     引入接触波（Contact wave），恢复了被 HLL 格式抹平的接触间断。
+    ///   </item>
+    ///   <item>
+    ///     守恒变量：U = [A, Q]（过水面积、流量）；
+    ///     数值通量：F = [Q, Q²/A + gAD/2]，其中 D = A/T 为水力深度（水面宽 T 的近似）；
+    ///     源项：S = [q_lat, gA(S₀ - Sf)]，分别为净旁侧流量和床坡-摩阻合力。
+    ///   </item>
+    ///   <item>
+    ///     在每个界面（i+1/2）处，以左右单元状态为输入计算 HLLC 数值通量，
+    ///     再对每个单元进行守恒更新：U_i^{n+1} = U_i^n - Δt/Δx·(F_{i+1/2} - F_{i-1/2}) + S_i·Δt。
+    ///   </item>
+    ///   <item>
+    ///     稳定性要求：CFL 条件 |V ± c| ≤ Δx/Δt（与 Lax-Friedrichs 格式相同）。
+    ///     每时步完成后调用 <see cref="CheckCflAll"/> 检验，违反时抛出异常。
+    ///   </item>
+    ///   <item>
+    ///     边界节点（i=0 和 i=N-1）采用"常数外推虚节点"法生成边界通量，
+    ///     更新后再根据给定主边界条件（流量过程线 or 水深）覆盖对应的 Q 或水深值。
+    ///   </item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    public class HLLCSolver : Solver
+    {
+        /// <summary>
+        /// CFL 警告阈值：CFL 超过此值时抛出异常，介于 1.0 和此值之间时仅发出警告。
+        /// 默认值 1.05（允许 5% 以内的 CFL 超限）。
+        /// </summary>
+        public double CflWarningThreshold { get; set; } = 1.05;
+
+        /// <summary>每个时步的最大 CFL 数数组 [时间层]（仿真完成后可读取）。</summary>
+        public double[]? MaxCflPerStep { get; private set; }
+
+        /// <summary>
+        /// CFL 超限警告回调（可选）。
+        /// 当某步 CFL 在 1 到 <see cref="CflWarningThreshold"/> 之间时触发，
+        /// 参数为警告消息字符串。
+        /// </summary>
+        public Action<string>? CflWarningCallback { get; set; }
+
+        /// <summary>
+        /// 构造 HLLC 求解器。
+        /// </summary>
+        /// <param name="channel">河道对象。</param>
+        /// <param name="timeStep">时间步长（秒）。</param>
+        /// <param name="spatialStep">目标空间步长（m）。</param>
+        /// <param name="simulationTime">总模拟时长（秒）。</param>
+        /// <param name="fitSpatialStep">是否微调空间步长（默认 true）。</param>
+        public HLLCSolver(Channel channel, double timeStep, double spatialStep, double simulationTime,
+                          bool fitSpatialStep = true)
+            : base(channel, timeStep, spatialStep, simulationTime, fitSpatialStep)
+        {
+            InitializeT0();
+        }
+
+        /// <summary>
+        /// 执行 HLLC 显式仿真，逐时间层推进。
+        /// <para>
+        /// 每个时间层步骤：
+        /// 1. 计算所有界面（含虚节点）处的 HLLC 数值通量；
+        /// 2. 对所有节点应用守恒更新 + 源项；
+        /// 3. 用主边界条件覆盖端节点；
+        /// 4. 检验 CFL 条件。
+        /// </para>
+        /// </summary>
+        public override void Run(int verbose = 1)
+        {
+            bool running = true;
+            MaxCflPerStep = new double[NumberOfTimeLevels];
+            var swTotal = Stopwatch.StartNew();
+            var swStep  = new Stopwatch();
+
+            while (running)
+            {
+                swStep.Restart();
+                TimeLevel++;
+                if (TimeLevel >= NumberOfTimeLevels)
+                {
+                    TimeLevel = NumberOfTimeLevels - 1;
+                    running = false;
+                    break;
+                }
+
+                if (verbose >= 1) Console.WriteLine($"\n> Time level #{TimeLevel}");
+
+                AdvanceTimeStep();
+
+                double maxCfl = CheckCflAll();
+                MaxCflPerStep[TimeLevel] = maxCfl;
+
+                swStep.Stop();
+                StepCallback?.Invoke(TimeLevel, NumberOfTimeLevels - 1,
+                                     swStep.Elapsed.TotalMilliseconds,
+                                     swTotal.Elapsed.TotalSeconds);
+            }
+
+            base.Finalize(verbose);
+        }
+
+        // ---- 时间步推进 ----
+
+        /// <summary>
+        /// 推进一个时间步：计算所有界面的 HLLC 通量，应用守恒更新，处理边界条件。
+        /// </summary>
+        private void AdvanceTimeStep()
+        {
+            int    n    = NumberOfNodes;
+            double dt   = TimeStep;
+            double dx   = SpatialStep;
+            double tCur = TimeLevel * dt;          // 新时层时刻
+            double tMid = (TimeLevel - 0.5) * dt;  // 旧→新半步时刻（用于旁侧流量）
+            double qLat = Channel.GetNetLateralFlowPerLength(tMid);
+
+            // 计算所有内部界面（节点 0~1, 1~2, …, N-2~N-1）处的 HLLC 通量
+            // fA[k]、fQ[k] 分别为界面 k+1/2（即节点 k 与 k+1 之间）的通量
+            var fA = new double[n - 1];
+            var fQ = new double[n - 1];
+            for (int k = 0; k < n - 1; k++)
+                ComputeInterfaceFlux(k, k + 1, out fA[k], out fQ[k]);
+
+            // 对每个节点进行守恒更新
+            // 内部节点（1 到 N-2）：完整的守恒更新
+            for (int i = 1; i < n - 1; i++)
+                UpdateInteriorNode(i, fA[i - 1], fA[i], fQ[i - 1], fQ[i], dx, dt, qLat);
+
+            // 端节点（0 和 N-1）：先用虚节点界面通量更新，再用主边界条件覆盖
+            UpdateUpstreamNode(n, fA, fQ, dx, dt, tCur, tMid, qLat);
+            UpdateDownstreamNode(n, fA, fQ, dx, dt, tCur, tMid, qLat);
+        }
+
+        /// <summary>
+        /// 计算节点 L 与节点 R 之间界面处的 HLLC 数值通量。
+        /// </summary>
+        private void ComputeInterfaceFlux(int L, int R, out double fa, out double fq)
+        {
+            double A_L = AreaAt(TimeLevel - 1, L);
+            double Q_L = FlowAt(TimeLevel - 1, L);
+            double T_L = Channel.TopWidth(L, WaterLevelAt(TimeLevel - 1, L));
+
+            double A_R = AreaAt(TimeLevel - 1, R);
+            double Q_R = FlowAt(TimeLevel - 1, R);
+            double T_R = Channel.TopWidth(R, WaterLevelAt(TimeLevel - 1, R));
+
+            HLLCFlux(A_L, Q_L, T_L, A_R, Q_R, T_R, out fa, out fq);
+        }
+
+        /// <summary>
+        /// 守恒更新内部节点 i 的 A（进而反算水深）和 Q。
+        /// </summary>
+        private void UpdateInteriorNode(int i,
+            double fA_left, double fA_right,
+            double fQ_left, double fQ_right,
+            double dx, double dt, double qLat)
+        {
+            double A_i = AreaAt(TimeLevel - 1, i);
+            double Q_i = FlowAt(TimeLevel - 1, i);
+
+            // 床坡源项：S₀ = -(z_{i+1} - z_{i-1}) / (2Δx)（中心差分）
+            double z_prev = Channel.BedLevelAt(i - 1);
+            double z_next = Channel.BedLevelAt(i + 1);
+            double S0 = -(z_next - z_prev) / (2.0 * dx);
+
+            // 摩阻坡降 Sf（等效能量坡度）
+            double Sf = SeAt(TimeLevel - 1, i);
+
+            // 守恒更新（连续性 + 动量）
+            double newA = A_i - dt / dx * (fA_right - fA_left) + qLat * dt;
+            double newQ = Q_i - dt / dx * (fQ_right - fQ_left)
+                               + Hydraulics.G * A_i * (S0 - Sf) * dt;
+
+            Depth![TimeLevel, i] = AreaToDepth(i, newA);
+            Flow![TimeLevel, i]  = newQ;
+        }
+
+        /// <summary>
+        /// 更新上游端节点（i=0）。
+        /// 用虚节点（常数外推）计算左侧界面通量，进行完整守恒更新，
+        /// 然后根据主边界条件覆盖 Q 或水深。
+        /// </summary>
+        private void UpdateUpstreamNode(int n,
+            double[] fA, double[] fQ,
+            double dx, double dt, double tCur, double tMid, double qLat)
+        {
+            // 虚节点（i=-1）：常数外推，状态等于节点 0
+            double A_ghost = AreaAt(TimeLevel - 1, 0);
+            double Q_ghost = FlowAt(TimeLevel - 1, 0);
+            double T_ghost = Channel.TopWidth(0, WaterLevelAt(TimeLevel - 1, 0));
+
+            double A_0 = AreaAt(TimeLevel - 1, 0);
+            double Q_0 = FlowAt(TimeLevel - 1, 0);
+            double T_0 = Channel.TopWidth(0, WaterLevelAt(TimeLevel - 1, 0));
+
+            // 左虚节点到节点0的界面通量
+            HLLCFlux(A_ghost, Q_ghost, T_ghost, A_0, Q_0, T_0, out double fA_ghost, out double fQ_ghost);
+
+            // 床坡（单侧差分）
+            double S0 = -(Channel.BedLevelAt(1) - Channel.BedLevelAt(0)) / dx;
+            double Sf = SeAt(TimeLevel - 1, 0);
+
+            double newA = A_0 - dt / dx * (fA[0] - fA_ghost) + qLat * dt;
+            double newQ = Q_0 - dt / dx * (fQ[0] - fQ_ghost)
+                               + Hydraulics.G * A_0 * (S0 - Sf) * dt;
+
+            if (Channel.UpstreamBoundary.IsFlowDependent)
+            {
+                // 流量类边界：用连续性方程算水深，Q 从过程线获取
+                double hGuess = AreaToDepth(0, newA);
+                double bc_Q = Channel.UpstreamBoundary.Hydrograph?.GetAt(tCur)
+                              ?? Hydraulics.NormalFlow(
+                                   Channel.XsAtNode![0].BedSlope ?? 0,
+                                   Channel.XsAtNode![0].Conveyance(Channel.XsAtNode![0].ZMin + hGuess));
+                Depth![TimeLevel, 0] = hGuess;
+                Flow![TimeLevel, 0]  = bc_Q;
+            }
+            else
+            {
+                // 水深类边界：用动量方程算 Q，水深取边界给定值
+                double targetDepth = Channel.UpstreamBoundary.InitialDepth ?? DepthAt(0, 0);
+                Depth![TimeLevel, 0] = targetDepth;
+                Flow![TimeLevel, 0]  = newQ;
+            }
+        }
+
+        /// <summary>
+        /// 更新下游端节点（i=N-1）。
+        /// 用虚节点（常数外推）计算右侧界面通量，进行完整守恒更新，
+        /// 然后根据主边界条件覆盖 Q 或水深。
+        /// </summary>
+        private void UpdateDownstreamNode(int n,
+            double[] fA, double[] fQ,
+            double dx, double dt, double tCur, double tMid, double qLat)
+        {
+            int last = n - 1;
+
+            // 虚节点（i=N）：常数外推，状态等于节点 N-1
+            double A_ghost = AreaAt(TimeLevel - 1, last);
+            double Q_ghost = FlowAt(TimeLevel - 1, last);
+            double T_ghost = Channel.TopWidth(last, WaterLevelAt(TimeLevel - 1, last));
+
+            double A_n = AreaAt(TimeLevel - 1, last);
+            double Q_n = FlowAt(TimeLevel - 1, last);
+            double T_n = Channel.TopWidth(last, WaterLevelAt(TimeLevel - 1, last));
+
+            // 节点 N-1 到右虚节点的界面通量
+            HLLCFlux(A_n, Q_n, T_n, A_ghost, Q_ghost, T_ghost, out double fA_ghost, out double fQ_ghost);
+
+            // 床坡（单侧差分）
+            double S0 = -(Channel.BedLevelAt(last) - Channel.BedLevelAt(last - 1)) / dx;
+            double Sf = SeAt(TimeLevel - 1, last);
+
+            double newA = A_n - dt / dx * (fA_ghost - fA[last - 1]) + qLat * dt;
+            double newQ = Q_n - dt / dx * (fQ_ghost - fQ[last - 1])
+                               + Hydraulics.G * A_n * (S0 - Sf) * dt;
+
+            if (Channel.DownstreamBoundary.IsFlowDependent)
+            {
+                // 流量类边界：连续性方程算水深，Q 从边界条件反算
+                double hGuess = AreaToDepth(last, newA);
+                double bc_Q = -Channel.DownstreamBoundary.ConditionResidual(hGuess, 0, tCur);
+                Depth![TimeLevel, last] = hGuess;
+                Flow![TimeLevel, last]  = bc_Q;
+            }
+            else
+            {
+                // 水深类边界：动量方程算 Q，水深由调蓄或固定深度给定
+                double vol = 0.5 * (FlowAt(TimeLevel - 1, last) + newQ) * dt;
+                double targetDepth = -(Channel.DownstreamBoundary.ConditionResidual(
+                    DepthAt(TimeLevel - 1, last), newQ, tCur, dt, vol) - DepthAt(TimeLevel - 1, last));
+                Depth![TimeLevel, last] = Math.Max(targetDepth, 0.001);
+                Flow![TimeLevel, last]  = newQ;
+            }
+        }
+
+        // ---- HLLC 通量核心 ----
+
+        /// <summary>
+        /// 计算 HLLC Riemann 通量。
+        /// <para>
+        /// 守恒变量 U = [A, Q]；物理通量 F = [Q, Q²/A + gAD/2]（D = A/T 为水力深度）。
+        /// 波速估算（Einfeldt 法）：
+        ///   S_L = min(V_L − c_L, V_R − c_R)，S_R = max(V_L + c_L, V_R + c_R)；
+        /// 接触波速（Batten 等, 1997）：
+        ///   S_* = (P_L − P_R + A_L·V_L·(S_L − V_L) − A_R·V_R·(S_R − V_R))
+        ///         / (A_L·(S_L − V_L) − A_R·(S_R − V_R))；
+        /// 中间态：A_K* = A_K·(S_K − V_K)/(S_K − S_*)，Q_K* = A_K*·S_*。
+        /// </para>
+        /// </summary>
+        private static void HLLCFlux(
+            double A_L, double Q_L, double T_L,
+            double A_R, double Q_R, double T_R,
+            out double fa, out double fq)
+        {
+            const double eps = 1e-10;
+
+            // 防止面积/宽度为零（干断面）
+            A_L = Math.Max(A_L, eps);
+            A_R = Math.Max(A_R, eps);
+            T_L = Math.Max(T_L, eps);
+            T_R = Math.Max(T_R, eps);
+
+            double g   = Hydraulics.G;
+            double V_L = Q_L / A_L;
+            double V_R = Q_R / A_R;
+            double D_L = A_L / T_L;  // 水力深度（液压深度）
+            double D_R = A_R / T_R;
+            double c_L = Math.Sqrt(g * D_L);  // 浅水波速
+            double c_R = Math.Sqrt(g * D_R);
+
+            // 静水压力项近似 P = g·A·D/2
+            double P_L = 0.5 * g * A_L * D_L;
+            double P_R = 0.5 * g * A_R * D_R;
+
+            // 物理通量 F_K = [Q_K, Q_K·V_K + P_K]
+            double fA_L = Q_L;
+            double fQ_L = Q_L * V_L + P_L;
+            double fA_R = Q_R;
+            double fQ_R = Q_R * V_R + P_R;
+
+            // ── Einfeldt 波速估算 ──
+            double S_L = Math.Min(V_L - c_L, V_R - c_R);
+            double S_R = Math.Max(V_L + c_L, V_R + c_R);
+
+            // 若所有波均向同一侧传播，直接取上风通量
+            if (S_L >= 0) { fa = fA_L; fq = fQ_L; return; }
+            if (S_R <= 0) { fa = fA_R; fq = fQ_R; return; }
+
+            // ── 接触波速 S_* （Batten et al., 1997）──
+            double denom = A_L * (S_L - V_L) - A_R * (S_R - V_R);
+            double S_star;
+            if (Math.Abs(denom) < eps)
+            {
+                // 退化情形：取两侧速度算术平均
+                S_star = 0.5 * (V_L + V_R);
+            }
+            else
+            {
+                S_star = (P_L - P_R + A_L * V_L * (S_L - V_L) - A_R * V_R * (S_R - V_R)) / denom;
+            }
+            // 将 S_* 夹在 [S_L, S_R] 内，确保数值稳定
+            S_star = Math.Max(S_L, Math.Min(S_R, S_star));
+
+            // ── 计算 HLLC 通量 ──
+            if (S_star >= 0)
+            {
+                // 接触波向右 → 取左 HLLC 中间态
+                double factor = (S_L - V_L) / (S_L - S_star);   // > 0（因 S_L < V_L 且 S_L ≤ S_*）
+                double A_Ls = A_L * factor;
+                double Q_Ls = A_Ls * S_star;
+                fa = fA_L + S_L * (A_Ls - A_L);
+                fq = fQ_L + S_L * (Q_Ls - Q_L);
+            }
+            else
+            {
+                // 接触波向左 → 取右 HLLC 中间态
+                double factor = (S_R - V_R) / (S_R - S_star);   // > 0（因 S_R > V_R 且 S_R ≥ S_*）
+                double A_Rs = A_R * factor;
+                double Q_Rs = A_Rs * S_star;
+                fa = fA_R + S_R * (A_Rs - A_R);
+                fq = fQ_R + S_R * (Q_Rs - Q_R);
+            }
+        }
+
+        // ---- CFL 检验 ----
+
+        /// <summary>
+        /// 检验所有节点的 CFL 稳定性条件：|V ± c| ≤ Δx/Δt。
+        /// </summary>
+        /// <returns>本时步所有节点中最大的 CFL 数。</returns>
+        private double CheckCflAll()
+        {
+            double stepMaxCfl = 0;
+            int    maxNode    = 0;
+
+            for (int i = 0; i < NumberOfNodes; i++)
+            {
+                double A = AreaAt(TimeLevel, i);
+                double Q = FlowAt(TimeLevel, i);
+                if (A < 1e-10) continue;
+
+                double V = Q / A;
+                double T = Channel.TopWidth(i, WaterLevelAt(TimeLevel, i));
+                double D = T > 1e-10 ? A / T : 0;
+                double c = Math.Sqrt(Hydraulics.G * Math.Max(D, 0));
+
+                double maxCelerity = Math.Max(Math.Abs(V + c), Math.Abs(V - c));
+                double cfl = maxCelerity / NumCelerity;
+                if (cfl > stepMaxCfl) { stepMaxCfl = cfl; maxNode = i; }
+            }
+
+            if (stepMaxCfl > CflWarningThreshold)
+                throw new InvalidOperationException(
+                    $"CFL condition failed at i={maxNode}, k={TimeLevel}. CFL={stepMaxCfl:F3}");
+
+            if (stepMaxCfl > 1.0)
+            {
+                string msg = $"[CFL 警告] 步骤 k={TimeLevel}, 节点 i={maxNode}: CFL={stepMaxCfl:F3} > 1（低于阈值 {CflWarningThreshold:F2}，继续计算）";
+                if (CflWarningCallback != null)
+                    CflWarningCallback(msg);
+                else
+                    Console.WriteLine(msg);
+            }
+
+            return stepMaxCfl;
+        }
+    }
+}

@@ -13,7 +13,7 @@ namespace FlowSim
     /// 功能概述：
     /// <list type="bullet">
     ///   <item>通过"河道设置"、"边界条件"、"求解器设置"选项卡接受仿真参数输入；</item>
-    ///   <item>点击"运行仿真"按钮，在后台线程中调用 Preissmann 或 Lax-Friedrichs 求解器；</item>
+    ///   <item>点击"运行仿真"按钮，在后台线程中调用 Preissmann、Lax-Friedrichs 或 HLLC 求解器；</item>
     ///   <item>仿真完成后，在"结果"选项卡展示流量过程线、水面纵剖面图以及统计汇总；</item>
     ///   <item>点击"保存结果"按钮，将计算结果导出为 Excel 和文本摘要文件。</item>
     /// </list>
@@ -191,6 +191,8 @@ namespace FlowSim
 
                 if (solver is LaxSolver lax)
                     lax.CflWarningCallback = msg => Log(msg);
+                else if (solver is HLLCSolver hllc)
+                    hllc.CflWarningCallback = msg => Log(msg);
 
                 Log($"正在运行仿真（{totalSteps} 步）...");
                 Task.Run(() =>
@@ -799,10 +801,10 @@ namespace FlowSim
         /// 3. 根据下游边界类型（正常水深 or 固定水深）构造下游边界；
         /// 4. 构造 <see cref="Channel"/> 对象（使用 GVFEquation 初始化方式）；
         /// 5. 若选择不规则断面，用 CSV 断面建立多断面模型；若索引含 x,y 坐标则调用 SetCoords；
-        /// 6. 根据用户选择的格式（Preissmann or Lax-Friedrichs）构造求解器。
+        /// 6. 根据用户选择的格式（Preissmann、Lax-Friedrichs 或 HLLC）构造求解器。
         /// </para>
         /// </summary>
-        /// <returns>初始化完成的求解器实例（<see cref="PreissmannSolver"/> 或 <see cref="LaxSolver"/>）。</returns>
+        /// <returns>初始化完成的求解器实例（<see cref="PreissmannSolver"/>、<see cref="LaxSolver"/> 或 <see cref="HLLCSolver"/>）。</returns>
         private Solver BuildSolver()
         {
             bool isIrregular = cmbXsType.SelectedIndex == 1;
@@ -963,6 +965,11 @@ namespace FlowSim
                 // Lax-Friedrichs 显式格式（受 CFL 条件约束）
                 solver = new LaxSolver(channel, timeStep, spatialStep, simTime);
             }
+            else if (solverType == "HLLC")
+            {
+                // HLLC Riemann 显式格式（受 CFL 条件约束，比 Lax 精度更高）
+                solver = new HLLCSolver(channel, timeStep, spatialStep, simTime);
+            }
             else
             {
                 // Preissmann 隐式格式（θ 决定数值耗散与精度的平衡）
@@ -1038,7 +1045,7 @@ namespace FlowSim
                 throw new InvalidOperationException(
                     $"初始水深 {dsInitDepth:F2} m 与流量 {channel.InitialFlowRate:F0} m³/s 严重不匹配：\n" +
                     $"  节点 {maxNode} 处初始流速 V ≈ {maxV:F0} m/s，远超物理范围。\n" +
-                    $"  这将导致 CFL 条件违反（Lax）或牛顿迭代不收敛（Preissmann）。{suggestion}");
+                    $"  这将导致 CFL 条件违反（Lax/HLLC）或牛顿迭代不收敛（Preissmann）。{suggestion}");
             }
         }
 
@@ -1165,14 +1172,17 @@ namespace FlowSim
             gridSummary.Rows.Add("净蓄水量变化（万m³）", $"{massImbVol / 10000.0:F2}");
             gridSummary.Rows.Add("质量不平衡（%）",     $"{massImbPct:F4}");
 
-            // 填充 CFL 条件查看表格（仅 Lax-Friedrichs 格式有效）
+            // 填充 CFL 条件查看表格（Lax-Friedrichs 和 HLLC 格式有效）
             gridCfl.Rows.Clear();
-            if (_solver is LaxSolver laxSolver && laxSolver.MaxCflPerStep != null)
+            double[]? cflPerStep = _solver is LaxSolver ls ? ls.MaxCflPerStep
+                                 : _solver is HLLCSolver hs ? hs.MaxCflPerStep
+                                 : null;
+            if (cflPerStep != null)
             {
                 double maxCflAll = 0;
                 for (int k = 1; k < nk; k++)
                 {
-                    double cfl = laxSolver.MaxCflPerStep[k];
+                    double cfl = cflPerStep[k];
                     maxCflAll = Math.Max(maxCflAll, cfl);
                     gridCfl.Rows.Add(k, $"{k * dt / 3600.0:F3}", $"{cfl:F4}");
                     // 超过 1.0 的行高亮显示
@@ -1183,7 +1193,7 @@ namespace FlowSim
             }
             else
             {
-                gridCfl.Rows.Add("—", "—", "（仅 Lax-Friedrichs 格式显示 CFL）");
+                gridCfl.Rows.Add("—", "—", "（仅 Lax-Friedrichs / HLLC 格式显示 CFL）");
             }
 
             // 初始化图表选项卡 + 数据查看选项卡

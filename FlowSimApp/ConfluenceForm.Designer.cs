@@ -210,13 +210,13 @@ namespace FlowSim
             tblSolver.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
             tblSolver.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
 
-            cmbSolverMethod.Items.AddRange(new[] { "Preissmann", "Lax-Friedrichs" });
+            cmbSolverMethod.Items.AddRange(new[] { "Preissmann", "Lax-Friedrichs", "HLLC" });
             cmbSolverMethod.SelectedIndex  = 0;
             cmbSolverMethod.DropDownStyle  = ComboBoxStyle.DropDownList;
             cmbSolverMethod.Dock           = DockStyle.Fill;
             cmbSolverMethod.SelectedIndexChanged += (s, e) =>
             {
-                bool isP = cmbSolverMethod.SelectedIndex == 0;
+                bool isP = cmbSolverMethod.SelectedItem?.ToString() == "Preissmann";
                 numTheta.Enabled     = isP;
                 numTolerance.Enabled = isP;
                 numMaxIter.Enabled   = isP;

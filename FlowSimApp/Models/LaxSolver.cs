@@ -373,31 +373,6 @@ namespace FlowSim.Models
         private double LaxCellAvg(double ip1, double im1) => 0.5 * (ip1 + im1);
 
         /// <summary>
-        /// 将过水面积 A 反算为水深 h，利用 Brent 方法求解方程 A(h+ZMin) = A_target。
-        /// 当 A≤0 时直接返回 0；若 Brent 方法失败，则用矩形断面近似（h ≈ A/B）作为备用。
-        /// </summary>
-        /// <param name="nodeIdx">节点索引。</param>
-        /// <param name="A">目标过水面积（m²）。</param>
-        /// <returns>对应水深 h（m，相对于床底）。</returns>
-        private double AreaToDepth(int nodeIdx, double A)
-        {
-            if (A <= 0) return 0;
-            var xs = Channel.XsAtNode![nodeIdx];
-            double zMin = xs.ZMin;
-            double hMax = 50.0;   // 搜索上限 50 m
-            try
-            {
-                // 求解 xs.Area(h + ZMin) = A，即水深 h 使得面积等于目标值
-                return Hydraulics.Brentq(h => xs.Area(h + zMin) - A, 1e-6, hMax);
-            }
-            catch
-            {
-                // 备用：矩形近似 h ≈ A / B（B = 断面宽度）
-                return A / Math.Max(xs.Width, 1.0);
-            }
-        }
-
-        /// <summary>
         /// 检验所有节点的 CFL 稳定性条件：|V ± c| ≤ Δx/Δt。
         /// <para>
         /// CFL 数 = max(|V+c|, |V-c|) / (Δx/Δt)，应满足 CFL ≤ 1。

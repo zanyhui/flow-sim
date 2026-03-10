@@ -482,6 +482,29 @@ namespace FlowSim.Models
         protected virtual void WriteExtraSheets(XLWorkbook wb, int nk) { }
 
         /// <summary>
+        /// 将过水面积 A 反算为水深 h（相对床底），利用 Brent 方法求解 Area(h + ZMin) = A。
+        /// 当 A ≤ 0 时直接返回 0；若求根失败，则用矩形近似 h ≈ A/B 作为备用。
+        /// </summary>
+        /// <param name="nodeIdx">节点索引。</param>
+        /// <param name="A">目标过水面积（m²）。</param>
+        /// <returns>对应水深 h（m，相对于床底）。</returns>
+        protected double AreaToDepth(int nodeIdx, double A)
+        {
+            if (A <= 0) return 0;
+            var xs = Channel.XsAtNode![nodeIdx];
+            double zMin = xs.ZMin;
+            double hMax = 50.0;
+            try
+            {
+                return Hydraulics.Brentq(h => xs.Area(h + zMin) - A, 1e-6, hMax);
+            }
+            catch
+            {
+                return A / Math.Max(xs.Width, 1.0);
+            }
+        }
+
+        /// <summary>
         /// 将秒数格式化为 HH:MM:SS 字符串，与 Python <c>utility.seconds_to_hms</c> 对应。
         /// </summary>
         private static string SecondsToHms(double seconds)

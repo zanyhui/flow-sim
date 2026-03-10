@@ -643,6 +643,8 @@ namespace FlowSim
                 Solver s;
                 if (capturedSolverType == "Lax-Friedrichs")
                     s = new LaxSolver(ch, timeStep, spatialStep, simTime);
+                else if (capturedSolverType == "HLLC")
+                    s = new HLLCSolver(ch, timeStep, spatialStep, simTime);
                 else
                     s = new PreissmannSolver(ch, capturedTheta, timeStep, spatialStep, simTime)
                         { Tolerance = capturedTolerance, MaxIterations = capturedMaxIter };
@@ -993,12 +995,15 @@ namespace FlowSim
             gridSummary.Rows.Add("质量不平衡（%）",      $"{massImbPct:F4}");
 
             gridCfl.Rows.Clear();
-            if (_solver is LaxSolver laxSolver && laxSolver.MaxCflPerStep != null)
+            double[]? cflPerStep = _solver is LaxSolver ls ? ls.MaxCflPerStep
+                                 : _solver is HLLCSolver hs ? hs.MaxCflPerStep
+                                 : null;
+            if (cflPerStep != null)
             {
                 double maxCflAll = 0;
                 for (int k = 1; k < nk; k++)
                 {
-                    double cfl = laxSolver.MaxCflPerStep[k];
+                    double cfl = cflPerStep[k];
                     maxCflAll  = Math.Max(maxCflAll, cfl);
                     gridCfl.Rows.Add(k, $"{k * dt / 3600.0:F3}", $"{cfl:F4}");
                     if (cfl > 1.0)
@@ -1008,7 +1013,7 @@ namespace FlowSim
             }
             else
             {
-                gridCfl.Rows.Add("—", "—", "（仅 Lax-Friedrichs 格式显示 CFL）");
+                gridCfl.Rows.Add("—", "—", "（仅 Lax-Friedrichs / HLLC 格式显示 CFL）");
             }
 
             UpdateChartsTab();
