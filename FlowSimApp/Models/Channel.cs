@@ -482,7 +482,27 @@ namespace FlowSim.Models
         private void _gvfConditions(int nNodes, double Q)
         {
             double dx = nNodes > 1 ? Length / (nNodes - 1) : Length;  // 空间步长
-            double h = DownstreamBoundary.InitialDepth ?? 1.0;         // 从下游已知水深开始
+
+            // 当下游边界为正常水深（均匀流）条件时，GVF 积分的起始水深应使用正常水深，
+            // 而非用户界面中输入的"初始水深"字段值。
+            //
+            // 原因：正常水深边界条件在每个时间步施加 Qn(h) = K·√S₀，若 GVF 初始条件
+            // 用了与正常水深相差较大的值（例如用户输入 3 m，而正常水深仅 1.8 m），
+            // 则第一个时步下游出流量可能达到 Qn(3m)≈569 m³/s，远大于初始流量 250 m³/s，
+            // 造成极大的初始扰动，进而使显式格式（Lax / HLLC）在数步内发散，触发 CFL=∞。
+            //
+            // 使用正常水深作为起始值可保证初始条件与边界条件一致，消除人为扰动。
+            double h;
+            if (DownstreamBoundary.Condition == BoundaryConditionType.NormalDepth
+                && XsAtNode != null && nNodes > 0)
+            {
+                double hn = XsAtNode[nNodes - 1].NormalDepth(Q);
+                h = hn > 0 ? hn : (DownstreamBoundary.InitialDepth ?? 1.0);
+            }
+            else
+            {
+                h = DownstreamBoundary.InitialDepth ?? 1.0;  // 从下游已知水深开始
+            }
 
             // 设置下游末端节点初始条件
             InitialConditions![nNodes - 1, 0] = h;

@@ -849,7 +849,8 @@ namespace FlowSim
                     usHydrograph = BuildTriangularHydrograph(
                         (double)numPeakFlow.Value,
                         (double)numRiseTime.Value * 3600,       // 小时转秒
-                        (double)numSimTime.Value * 3600);
+                        (double)numSimTime.Value * 3600,
+                        initialFlow);                            // 以初始流量为基流，保证过程线起始值与初始条件一致
                     break;
                 case 1:  // 正常水深边界：出口用均匀流公式
                     usBcType = BoundaryConditionType.NormalDepth;
@@ -1053,19 +1054,27 @@ namespace FlowSim
         /// 根据峰值流量和起涨时间构造三角形洪水过程线。
         /// <para>
         /// 过程线形状：
-        /// - [0, riseTime]：从基流 (baseFlow = 10% peakFlow) 线性上升至 peakFlow；
-        /// - [riseTime, riseTime + fallTime]：从 peakFlow 线性下降至 baseFlow；
+        /// - [0, riseTime]：从基流（initialFlow 或默认 10% peakFlow）线性上升至 peakFlow；
+        /// - [riseTime, riseTime + fallTime]：从 peakFlow 线性下降至基流；
         ///   fallTime = min(2·riseTime, totalTime - riseTime)（确保不超出总时长）；
-        /// - [riseTime + fallTime, totalTime]：维持基流 baseFlow。
+        /// - [riseTime + fallTime, totalTime]：维持基流。
+        /// </para>
+        /// <para>
+        /// 当传入 <paramref name="initialFlow"/> 时，基流取该值而非默认的 10% 峰值。
+        /// 这可保证过程线起始点与河道初始条件一致，避免在显式格式（HLLC/Lax）中
+        /// 因上游流量跳变引起数值扰动。
         /// </para>
         /// </summary>
         /// <param name="peakFlow">峰值流量（m³/s）。</param>
         /// <param name="riseTime">起涨历时（秒）。</param>
         /// <param name="totalTime">总模拟时长（秒）。</param>
+        /// <param name="initialFlow">初始（基）流量（m³/s）；若 ≤ 0 则默认取 10% 峰值。</param>
         /// <returns>三角形洪水过程线 <see cref="Hydrograph"/> 实例。</returns>
-        private static Hydrograph BuildTriangularHydrograph(double peakFlow, double riseTime, double totalTime)
+        private static Hydrograph BuildTriangularHydrograph(double peakFlow, double riseTime, double totalTime,
+                                                             double initialFlow = 0)
         {
-            double baseFlow = peakFlow * 0.1;  // 基流 = 峰值的 10%
+            // 若传入了有效初始流量（> 0），以其作为基流；否则取峰值的 10%
+            double baseFlow = initialFlow > 0 ? initialFlow : peakFlow * 0.1;
             double fallTime = Math.Min(riseTime * 2, totalTime - riseTime);  // 退水时间不超出总时长
             return new Hydrograph(t =>
             {

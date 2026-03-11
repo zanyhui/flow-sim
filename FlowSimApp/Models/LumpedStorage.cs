@@ -95,7 +95,17 @@ namespace FlowSim.Models
                 double targetVol = volIn - qOut * duration;   // 目标净蓄水量变化
                 return NetVolChange(yOld, yNew) - targetVol;  // 残差
             }
-            double yTarget = Hydraulics.Brentq(F, _yMin, _yMax);
+            double yTarget;
+            try
+            {
+                yTarget = Hydraulics.Brentq(F, _yMin, _yMax);
+            }
+            catch (ArgumentException)
+            {
+                // Brentq 要求区间两端函数值异号。若不满足（例如极端入流或水位已触及搜索边界），
+                // 则夹紧到最近端点：F(_yMin)<0 说明目标蓄量过大，水位取上限；否则取下限。
+                yTarget = F(_yMin) < 0 ? _yMax : _yMin;
+            }
             // 应用最低水位限制
             if (MinStage.HasValue && yTarget < MinStage.Value) yTarget = MinStage.Value;
             return yTarget;
