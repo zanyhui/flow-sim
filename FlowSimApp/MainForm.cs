@@ -191,7 +191,7 @@ namespace FlowSim
 
                 if (solver is LaxSolver lax)
                     lax.CflWarningCallback = msg => Log(msg);
-                else if (solver is HLLCSolver hllc)
+                else if (solver is HLLSolver hllc)
                     hllc.CflWarningCallback = msg => Log(msg);
 
                 Log($"正在运行仿真（{totalSteps} 步）...");
@@ -804,7 +804,7 @@ namespace FlowSim
         /// 6. 根据用户选择的格式（Preissmann、Lax-Friedrichs 或 HLLC）构造求解器。
         /// </para>
         /// </summary>
-        /// <returns>初始化完成的求解器实例（<see cref="PreissmannSolver"/>、<see cref="LaxSolver"/> 或 <see cref="HLLCSolver"/>）。</returns>
+        /// <returns>初始化完成的求解器实例（<see cref="PreissmannSolver"/>、<see cref="LaxSolver"/> 或 <see cref="HLLSolver"/>）。</returns>
         private Solver BuildSolver()
         {
             bool isIrregular = cmbXsType.SelectedIndex == 1;
@@ -969,7 +969,7 @@ namespace FlowSim
             else if (solverType == "HLLC")
             {
                 // HLLC Riemann 显式格式（受 CFL 条件约束，比 Lax 精度更高）
-                solver = new HLLCSolver(channel, timeStep, spatialStep, simTime);
+                solver = new HLLSolver(channel, timeStep, spatialStep, simTime);
             }
             else
             {
@@ -1191,7 +1191,7 @@ namespace FlowSim
             // 填充 CFL 条件查看表格（Lax-Friedrichs 和 HLLC 格式有效）
             gridCfl.Rows.Clear();
             double[]? cflPerStep = _solver is LaxSolver ls ? ls.MaxCflPerStep
-                                 : _solver is HLLCSolver hs ? hs.MaxCflPerStep
+                                 : _solver is HLLSolver hs ? hs.MaxCflPerStep
                                  : null;
             if (cflPerStep != null)
             {

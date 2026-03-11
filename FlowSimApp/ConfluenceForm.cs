@@ -644,7 +644,7 @@ namespace FlowSim
                 if (capturedSolverType == "Lax-Friedrichs")
                     s = new LaxSolver(ch, timeStep, spatialStep, simTime);
                 else if (capturedSolverType == "HLLC")
-                    s = new HLLCSolver(ch, timeStep, spatialStep, simTime);
+                    s = new HLLSolver(ch, timeStep, spatialStep, simTime);
                 else
                     s = new PreissmannSolver(ch, capturedTheta, timeStep, spatialStep, simTime)
                         { Tolerance = capturedTolerance, MaxIterations = capturedMaxIter };
@@ -996,7 +996,7 @@ namespace FlowSim
 
             gridCfl.Rows.Clear();
             double[]? cflPerStep = _solver is LaxSolver ls ? ls.MaxCflPerStep
-                                 : _solver is HLLCSolver hs ? hs.MaxCflPerStep
+                                 : _solver is HLLSolver hs ? hs.MaxCflPerStep
                                  : null;
             if (cflPerStep != null)
             {

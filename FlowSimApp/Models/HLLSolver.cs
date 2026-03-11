@@ -4,13 +4,13 @@ using System.Diagnostics;
 namespace FlowSim.Models
 {
     /// <summary>
-    /// HLLC（Harten-Lax-van Leer-Contact）Riemann 求解器，用于一维圣维南方程组。
+    /// HLL（Harten-Lax-van Leer）Riemann 求解器，用于一维圣维南方程组。
     /// <para>
     /// 算法概述：
     /// <list type="bullet">
     ///   <item>
-    ///     HLLC 是一种 Godunov 型有限体积格式，在 HLL（两波）格式的基础上
-    ///     引入接触波（Contact wave），恢复了被 HLL 格式抹平的接触间断。
+    ///     HLL 是一种 Godunov 型有限体积格式（两波格式）：
+    ///     S_L 和 S_R 分别为左、右波速，数值通量 F_HLL 通过两波近似 Riemann 问题计算。
     ///   </item>
     ///   <item>
     ///     守恒变量：U = [A, Q]（过水面积、流量）；
@@ -18,7 +18,7 @@ namespace FlowSim.Models
     ///     源项：S = [q_lat, gA(S₀ - Sf)]，分别为净旁侧流量和床坡-摩阻合力。
     ///   </item>
     ///   <item>
-    ///     在每个界面（i+1/2）处，以左右单元状态为输入计算 HLLC 数值通量，
+    ///     在每个界面（i+1/2）处，以左右单元状态为输入计算 HLL 数值通量，
     ///     再对每个单元进行守恒更新：U_i^{n+1} = U_i^n - Δt/Δx·(F_{i+1/2} - F_{i-1/2}) + S_i·Δt。
     ///   </item>
     ///   <item>
@@ -32,7 +32,7 @@ namespace FlowSim.Models
     /// </list>
     /// </para>
     /// </summary>
-    public class HLLCSolver : Solver
+    public class HLLSolver : Solver
     {
         /// <summary>
         /// CFL 警告阈值：CFL 超过此值时抛出异常，介于 1.0 和此值之间时仅发出警告。
@@ -54,14 +54,14 @@ namespace FlowSim.Models
         public Action<string>? CflWarningCallback { get; set; }
 
         /// <summary>
-        /// 构造 HLLC 求解器。
+        /// 构造 HLL 求解器。
         /// </summary>
         /// <param name="channel">河道对象。</param>
         /// <param name="timeStep">时间步长（秒）。</param>
         /// <param name="spatialStep">目标空间步长（m）。</param>
         /// <param name="simulationTime">总模拟时长（秒）。</param>
         /// <param name="fitSpatialStep">是否微调空间步长（默认 true）。</param>
-        public HLLCSolver(Channel channel, double timeStep, double spatialStep, double simulationTime,
+        public HLLSolver(Channel channel, double timeStep, double spatialStep, double simulationTime,
                           bool fitSpatialStep = true)
             : base(channel, timeStep, spatialStep, simulationTime, fitSpatialStep)
         {
@@ -69,10 +69,10 @@ namespace FlowSim.Models
         }
 
         /// <summary>
-        /// 执行 HLLC 显式仿真，逐时间层推进。
+        /// 执行 HLL 显式仿真，逐时间层推进。
         /// <para>
         /// 每个时间层步骤：
-        /// 1. 计算所有界面（含虚节点）处的 HLLC 数值通量；
+        /// 1. 计算所有界面（含虚节点）处的 HLL 数值通量；
         /// 2. 对所有节点应用守恒更新 + 源项；
         /// 3. 用主边界条件覆盖端节点；
         /// 4. 检验 CFL 条件。
@@ -260,7 +260,7 @@ namespace FlowSim.Models
 
         /// <summary>
         /// 推进一个时间步（长度为 <paramref name="dt"/>，起始绝对时刻为 <paramref name="tBase"/>）：
-        /// 计算所有界面的 HLLC 通量，应用守恒更新，处理边界条件。
+        /// 计算所有界面的 HLL 通量，应用守恒更新，处理边界条件。
         /// 读取状态来自 <c>Depth/Flow[TimeLevel-1, :]</c>，结果写入 <c>Depth/Flow[TimeLevel, :]</c>。
         /// </summary>
         /// <param name="dt">本步时间步长（秒），子步时传入 <c>TimeStep/nSub</c>。</param>
@@ -273,7 +273,7 @@ namespace FlowSim.Models
             double tMid = tBase + 0.5 * dt;    // 本步中间时刻（用于旁侧流量）
             double qLat = Channel.GetNetLateralFlowPerLength(tMid);
 
-            // 计算所有内部界面（节点 0~1, 1~2, …, N-2~N-1）处的 HLLC 通量
+            // 计算所有内部界面（节点 0~1, 1~2, …, N-2~N-1）处的 HLL 通量
             // fA[k]、fQ[k] 分别为界面 k+1/2（即节点 k 与 k+1 之间）的通量
             var fA = new double[n - 1];
             var fQ = new double[n - 1];
@@ -291,7 +291,7 @@ namespace FlowSim.Models
         }
 
         /// <summary>
-        /// 计算节点 L 与节点 R 之间界面处的 HLLC 数值通量。
+        /// 计算节点 L 与节点 R 之间界面处的 HLL 数值通量。
         /// </summary>
         private void ComputeInterfaceFlux(int L, int R, out double fa, out double fq)
         {
@@ -356,12 +356,12 @@ namespace FlowSim.Models
         /// 更新上游端节点（i=0）。
         /// <para>
         /// 对于流量类边界（FlowHydrograph / NormalDepth），
-        /// 跳过虚节点 HLLC 通量，直接将边界目标流量 bc_Q 作为进入端节点的通量，
+        /// 跳过虚节点 HLL 通量，直接将边界目标流量 bc_Q 作为进入端节点的通量，
         /// 从而精确满足质量守恒方程，消除因 Q_ghost≠bc_Q 导致的棋盘格振荡。
         /// </para>
         /// <para>
         /// 对于水深类边界（FixedDepth / StageHydrograph），
-        /// 则沿用常数外推虚节点 + HLLC 通量计算流量。
+        /// 则沿用常数外推虚节点 + HLL 通量计算流量。
         /// </para>
         /// </summary>
         private void UpdateUpstreamNode(int n,
@@ -377,7 +377,7 @@ namespace FlowSim.Models
 
             if (Channel.UpstreamBoundary.IsFlowDependent)
             {
-                // 流量类边界：以 bc_Q 作为精确入流通量（跳过虚节点 HLLC 通量），
+                // 流量类边界：以 bc_Q 作为精确入流通量（跳过虚节点 HLL 通量），
                 // 避免 fA_ghost≈bc_Q 近似误差引起数值振荡。
                 double h_old = DepthAt(TimeLevel - 1, 0);
                 double bc_Q = Channel.UpstreamBoundary.Hydrograph?.GetAt(tCur)
@@ -393,7 +393,7 @@ namespace FlowSim.Models
             }
             else
             {
-                // 水深类边界：虚节点（常数外推）+ HLLC 通量计算流量
+                // 水深类边界：虚节点（常数外推）+ HLL 通量计算流量
                 double T_0 = Channel.TopWidth(0, WaterLevelAt(TimeLevel - 1, 0));
                 HLLFlux(A_0, Q_0, T_0, A_0, Q_0, T_0, out double fA_ghost, out double fQ_ghost);
                 double newQ = Q_0 - dt / dx * (fQ[0] - fQ_ghost)
@@ -455,7 +455,7 @@ namespace FlowSim.Models
             }
         }
 
-        // ---- HLLC 通量核心 ----
+        // ---- HLL 通量核心 ----
 
         /// <summary>
         /// 计算 HLL Riemann 通量（使用 HLL 两波格式，而非 HLLC 三波格式）。
