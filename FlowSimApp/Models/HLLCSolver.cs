@@ -303,7 +303,7 @@ namespace FlowSim.Models
             double Q_R = FlowAt(TimeLevel - 1, R);
             double T_R = Channel.TopWidth(R, WaterLevelAt(TimeLevel - 1, R));
 
-            HLLCFlux(A_L, Q_L, T_L, A_R, Q_R, T_R, out fa, out fq);
+            HLLFlux(A_L, Q_L, T_L, A_R, Q_R, T_R, out fa, out fq);
         }
 
         /// <summary>
@@ -395,7 +395,7 @@ namespace FlowSim.Models
             {
                 // 水深类边界：虚节点（常数外推）+ HLLC 通量计算流量
                 double T_0 = Channel.TopWidth(0, WaterLevelAt(TimeLevel - 1, 0));
-                HLLCFlux(A_0, Q_0, T_0, A_0, Q_0, T_0, out double fA_ghost, out double fQ_ghost);
+                HLLFlux(A_0, Q_0, T_0, A_0, Q_0, T_0, out double fA_ghost, out double fQ_ghost);
                 double newQ = Q_0 - dt / dx * (fQ[0] - fQ_ghost)
                                    + Hydraulics.G * A_0 * (S0 - Sf) * dt;
                 double targetDepth = Channel.UpstreamBoundary.InitialDepth ?? DepthAt(0, 0);
@@ -425,7 +425,7 @@ namespace FlowSim.Models
             double T_n = Channel.TopWidth(last, WaterLevelAt(TimeLevel - 1, last));
 
             // 节点 N-1 到右虚节点的界面通量
-            HLLCFlux(A_n, Q_n, T_n, A_ghost, Q_ghost, T_ghost, out double fA_ghost, out double fQ_ghost);
+            HLLFlux(A_n, Q_n, T_n, A_ghost, Q_ghost, T_ghost, out double fA_ghost, out double fQ_ghost);
 
             // 床坡（单侧差分）
             double S0 = -(Channel.BedLevelAt(last) - Channel.BedLevelAt(last - 1)) / dx;
@@ -474,7 +474,7 @@ namespace FlowSim.Models
         /// 对缓流情形，HLL 与 HLLC 的物理精度无实质差别（1D 浅水方程接触波退化）。
         /// </para>
         /// </summary>
-        private static void HLLCFlux(
+        private static void HLLFlux(
             double A_L, double Q_L, double T_L,
             double A_R, double Q_R, double T_R,
             out double fa, out double fq)
