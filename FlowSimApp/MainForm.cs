@@ -1089,6 +1089,13 @@ namespace FlowSim
         }
 
         /// <summary>
+        /// 将数组中 NaN 或无穷大值替换为 0，防止 ScottPlot 抛出"Y data must not contain NaN"异常。
+        /// 当数值求解出现数值不稳定（溢出→Inf→Inf-Inf=NaN）时，此方法可保证图表仍能绘制。
+        /// </summary>
+        private static double[] SanitizeForPlot(double[] arr)
+            => arr.Select(x => double.IsFinite(x) ? x : 0.0).ToArray();
+
+        /// <summary>
         /// 仿真完成后更新"结果"选项卡的图表和统计信息。
         /// <para>
         /// 绘制内容：
@@ -1138,7 +1145,7 @@ namespace FlowSim
             var distKm = new double[distance.Length];
             for (int i = 0; i < distance.Length; i++) distKm[i] = distance[i] / 1000.0;
 
-            var wlScatter  = plotProfile.Plot.AddScatter(distKm, levels, label: "峰值水位");
+            var wlScatter  = plotProfile.Plot.AddScatter(distKm, SanitizeForPlot(levels), label: "峰值水位");
             wlScatter.Color      = Color.Blue;        wlScatter.MarkerSize = 0;
             var bedScatter = plotProfile.Plot.AddScatter(distKm, bed, label: "床底高程");
             bedScatter.Color     = Color.SaddleBrown; bedScatter.MarkerSize = 0;
@@ -1241,7 +1248,7 @@ namespace FlowSim
                     int ni = plotNodes[n];
                     double[] qs = new double[nk];
                     for (int k = 0; k < nk; k++) qs[k] = _solver.Flow![k, ni];
-                    var scatter = plotFlow.Plot.AddScatter(times, qs, label: nodeLabels[n]);
+                    var scatter = plotFlow.Plot.AddScatter(times, SanitizeForPlot(qs), label: nodeLabels[n]);
                     scatter.Color      = colors[n];
                     scatter.MarkerSize = 0;
                 }
@@ -1255,7 +1262,7 @@ namespace FlowSim
                 for (int k = 0; k < nk; k++) qs[k] = _solver.Flow![k, ni];
                 double[] chainages = _solver.Channel.ChAtNode!;
                 string label = $"节点 {ni}（{chainages[ni] / 1000.0:F1} km）";
-                var scatter = plotFlow.Plot.AddScatter(times, qs, label: label);
+                var scatter = plotFlow.Plot.AddScatter(times, SanitizeForPlot(qs), label: label);
                 scatter.Color      = Color.SteelBlue;
                 scatter.MarkerSize = 0;
                 plotFlow.Plot.Title($"流量过程线 — {label}");
@@ -1399,7 +1406,7 @@ namespace FlowSim
             bedLine.LineWidth  = 1.5f;
 
             // 绘制水面线（蓝色）
-            var wlLine = plotLongProfile.Plot.AddScatter(distKm, wl, label: "水面");
+            var wlLine = plotLongProfile.Plot.AddScatter(distKm, SanitizeForPlot(wl), label: "水面");
             wlLine.Color      = Color.DodgerBlue;
             wlLine.MarkerSize = 0;
             wlLine.LineWidth  = 2;

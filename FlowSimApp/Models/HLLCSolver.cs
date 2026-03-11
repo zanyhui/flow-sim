@@ -335,7 +335,9 @@ namespace FlowSim.Models
             // Positivity preservation: area must not be negative; if area is zero (dry section),
             // also zero out the flow to prevent the contradictory Q≠0, A=0 state that
             // would cause wave speed to blow up or produce NaN in subsequent steps.
-            if (newA <= 0)
+            // 数值守卫：若通量差运算产生 NaN 或 Inf（如两侧通量均溢出），将节点重置为干断面，
+            // 防止非有限值在后续时步中持续传播。
+            if (newA <= 0 || !double.IsFinite(newA))
             {
                 Depth![TimeLevel, i] = 0;
                 Flow![TimeLevel, i]  = 0;
@@ -343,9 +345,10 @@ namespace FlowSim.Models
             else
             {
                 double h = AreaToDepth(i, newA);
-                // 当反算水深为 0（极小干断面），同步将流量归零，防止 Q≠0/h=0 导致波速爆炸
+                // 当反算水深为 0（极小干断面），同步将流量归零，防止 Q≠0/h=0 导致波速爆炸。
+                // 若 newQ 也为非有限值，同样归零，避免 NaN 在结果数组中持续传播。
                 Depth![TimeLevel, i] = h;
-                Flow![TimeLevel, i]  = h > 0 ? newQ : 0;
+                Flow![TimeLevel, i]  = h > 0 && double.IsFinite(newQ) ? newQ : 0;
             }
         }
 
@@ -395,7 +398,7 @@ namespace FlowSim.Models
                 // 水深类边界：用动量方程算 Q，水深取边界给定值
                 double targetDepth = Channel.UpstreamBoundary.InitialDepth ?? DepthAt(0, 0);
                 Depth![TimeLevel, 0] = targetDepth;
-                Flow![TimeLevel, 0]  = newQ;
+                Flow![TimeLevel, 0]  = double.IsFinite(newQ) ? newQ : 0;
             }
         }
 
@@ -446,7 +449,7 @@ namespace FlowSim.Models
                 double targetDepth = -(Channel.DownstreamBoundary.ConditionResidual(
                     DepthAt(TimeLevel - 1, last), newQ, tCur, dt, vol) - DepthAt(TimeLevel - 1, last));
                 Depth![TimeLevel, last] = Math.Max(targetDepth, 0.001);
-                Flow![TimeLevel, last]  = newQ;
+                Flow![TimeLevel, last]  = double.IsFinite(newQ) ? newQ : 0;
             }
         }
 

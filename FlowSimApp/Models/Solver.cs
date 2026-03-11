@@ -494,10 +494,14 @@ namespace FlowSim.Models
         /// <returns>对应水深 h（m，相对于床底）。</returns>
         protected double AreaToDepth(int nodeIdx, double A)
         {
-            if (A <= 0) return 0;
+            if (A <= 0 || !double.IsFinite(A)) return 0;
             var xs = Channel.XsAtNode![nodeIdx];
             double zMin = xs.ZMin;
+            // 初始搜索上界 50 m；若该上界对应面积仍小于目标面积，则倍增直至满足括号条件，
+            // 确保 Brentq 的前提 f(0)<0 且 f(hMax)>0 始终成立。
             double hMax = 50.0;
+            while (xs.Area(zMin + hMax) < A && hMax < 1e4)
+                hMax *= 2.0;
             try
             {
                 // 使用 0.0 作为搜索下限：f(0)=Area(ZMin+0)-A=0-A=-A<0，保证括号条件始终满足
@@ -505,7 +509,7 @@ namespace FlowSim.Models
             }
             catch
             {
-                // A 超出 hMax 对应的面积范围：返回 hMax 作为保守上界
+                // A 超出 hMax 对应的面积范围（如极窄断面）：返回 hMax 作为保守上界
                 return hMax;
             }
         }
