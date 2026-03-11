@@ -217,8 +217,10 @@ namespace FlowSim.Models
                 double newQ = NewFlow(A_im1, A_ip1, Q_im1, Q_ip1, Y_im1, Y_ip1, Se_im1, Se_ip1);
 
                 // 将新过水面积反算为水深（通过 Brent 方法反查面积-水深关系）
-                Depth![TimeLevel, i] = AreaToDepth(i, newA);
-                Flow![TimeLevel, i]  = newQ;
+                double h = AreaToDepth(i, newA);
+                // 当反算水深为 0（极小干断面），同步将流量归零，防止 Q≠0/h=0 导致波速爆炸
+                Depth![TimeLevel, i] = h;
+                Flow![TimeLevel, i]  = h > 0 ? newQ : 0;
             }
         }
 

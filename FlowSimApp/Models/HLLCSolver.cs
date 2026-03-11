@@ -181,8 +181,18 @@ namespace FlowSim.Models
                     return;  // 稳定，或已达到子步上限
 
                 // 根据结果波速重新估算所需 nSub，并重试
-                int nSubNew = (int)Math.Ceiling(maxWaveNew * TimeStep / (CflSafetyFactor * SpatialStep));
-                nSub = Math.Min(Math.Max(nSubNew, nSub + 1), MaxNSub);
+                // 若 maxWaveNew 为非有限数（∞ 或 NaN），直接跳到子步上限以终止循环。
+                // 注意：(int)double.PositiveInfinity = int.MinValue（C# 未定义溢出行为），
+                // 会导致 nSub 每次只增加 1，永远无法到达 MaxNSub，造成无限循环风险。
+                if (!double.IsFinite(maxWaveNew))
+                {
+                    nSub = MaxNSub;
+                }
+                else
+                {
+                    int nSubNew = (int)Math.Ceiling(maxWaveNew * TimeStep / (CflSafetyFactor * SpatialStep));
+                    nSub = Math.Min(Math.Max(nSubNew, nSub + 1), MaxNSub);
+                }
             }
         }
 
@@ -332,8 +342,10 @@ namespace FlowSim.Models
             }
             else
             {
-                Depth![TimeLevel, i] = AreaToDepth(i, newA);
-                Flow![TimeLevel, i]  = newQ;
+                double h = AreaToDepth(i, newA);
+                // 当反算水深为 0（极小干断面），同步将流量归零，防止 Q≠0/h=0 导致波速爆炸
+                Depth![TimeLevel, i] = h;
+                Flow![TimeLevel, i]  = h > 0 ? newQ : 0;
             }
         }
 
@@ -375,7 +387,8 @@ namespace FlowSim.Models
                                    Channel.XsAtNode![0].BedSlope ?? 0,
                                    Channel.XsAtNode![0].Conveyance(Channel.XsAtNode![0].ZMin + hGuess));
                 Depth![TimeLevel, 0] = hGuess;
-                Flow![TimeLevel, 0]  = bc_Q;
+                // 当水深为0（干断面）时，流量也归零以保持 h=0/Q=0 一致性
+                Flow![TimeLevel, 0]  = hGuess > 0 ? bc_Q : 0;
             }
             else
             {
@@ -423,7 +436,8 @@ namespace FlowSim.Models
                 double hGuess = AreaToDepth(last, newA);
                 double bc_Q = -Channel.DownstreamBoundary.ConditionResidual(hGuess, 0, tCur);
                 Depth![TimeLevel, last] = hGuess;
-                Flow![TimeLevel, last]  = bc_Q;
+                // 当水深为0（干断面）时，流量也归零以保持 h=0/Q=0 一致性
+                Flow![TimeLevel, last]  = hGuess > 0 ? bc_Q : 0;
             }
             else
             {

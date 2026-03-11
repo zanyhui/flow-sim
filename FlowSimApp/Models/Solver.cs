@@ -483,7 +483,11 @@ namespace FlowSim.Models
 
         /// <summary>
         /// 将过水面积 A 反算为水深 h（相对床底），利用 Brent 方法求解 Area(h + ZMin) = A。
-        /// 当 A ≤ 0 时直接返回 0；若求根失败，则用矩形近似 h ≈ A/B 作为备用。
+        /// 当 A ≤ 0 时直接返回 0；若求根失败，则返回 hMax（面积超出搜索上界时的保守估计）。
+        /// <para>
+        /// 搜索区间下限使用 0.0（而非 1e-6）：f(0) = Area(ZMin) - A = -A 对任意正面积均为负，
+        /// 保证 Brentq 的括号条件 f(a)*f(b) ≤ 0 始终满足，避免 A 极小时两端点同号导致异常。
+        /// </para>
         /// </summary>
         /// <param name="nodeIdx">节点索引。</param>
         /// <param name="A">目标过水面积（m²）。</param>
@@ -496,11 +500,13 @@ namespace FlowSim.Models
             double hMax = 50.0;
             try
             {
-                return Hydraulics.Brentq(h => xs.Area(h + zMin) - A, 1e-6, hMax);
+                // 使用 0.0 作为搜索下限：f(0)=Area(ZMin+0)-A=0-A=-A<0，保证括号条件始终满足
+                return Hydraulics.Brentq(h => xs.Area(h + zMin) - A, 0.0, hMax);
             }
             catch
             {
-                return A / Math.Max(xs.Width, 1.0);
+                // A 超出 hMax 对应的面积范围：返回 hMax 作为保守上界
+                return hMax;
             }
         }
 
