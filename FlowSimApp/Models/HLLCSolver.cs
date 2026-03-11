@@ -354,48 +354,50 @@ namespace FlowSim.Models
 
         /// <summary>
         /// 更新上游端节点（i=0）。
-        /// 用虚节点（常数外推）计算左侧界面通量，进行完整守恒更新，
-        /// 然后根据主边界条件覆盖 Q 或水深。
+        /// <para>
+        /// 对于流量类边界（FlowHydrograph / NormalDepth），
+        /// 跳过虚节点 HLLC 通量，直接将边界目标流量 bc_Q 作为进入端节点的通量，
+        /// 从而精确满足质量守恒方程，消除因 Q_ghost≠bc_Q 导致的棋盘格振荡。
+        /// </para>
+        /// <para>
+        /// 对于水深类边界（FixedDepth / StageHydrograph），
+        /// 则沿用常数外推虚节点 + HLLC 通量计算流量。
+        /// </para>
         /// </summary>
         private void UpdateUpstreamNode(int n,
             double[] fA, double[] fQ,
             double dx, double dt, double tCur, double tMid, double qLat)
         {
-            // 虚节点（i=-1）：常数外推，状态等于节点 0
-            double A_ghost = AreaAt(TimeLevel - 1, 0);
-            double Q_ghost = FlowAt(TimeLevel - 1, 0);
-            double T_ghost = Channel.TopWidth(0, WaterLevelAt(TimeLevel - 1, 0));
-
             double A_0 = AreaAt(TimeLevel - 1, 0);
             double Q_0 = FlowAt(TimeLevel - 1, 0);
-            double T_0 = Channel.TopWidth(0, WaterLevelAt(TimeLevel - 1, 0));
-
-            // 左虚节点到节点0的界面通量
-            HLLCFlux(A_ghost, Q_ghost, T_ghost, A_0, Q_0, T_0, out double fA_ghost, out double fQ_ghost);
 
             // 床坡（单侧差分）
             double S0 = -(Channel.BedLevelAt(1) - Channel.BedLevelAt(0)) / dx;
             double Sf = SeAt(TimeLevel - 1, 0);
 
-            double newA = A_0 - dt / dx * (fA[0] - fA_ghost) + qLat * dt;
-            double newQ = Q_0 - dt / dx * (fQ[0] - fQ_ghost)
-                               + Hydraulics.G * A_0 * (S0 - Sf) * dt;
-
             if (Channel.UpstreamBoundary.IsFlowDependent)
             {
-                // 流量类边界：用连续性方程算水深，Q 从过程线获取
-                double hGuess = AreaToDepth(0, newA);
+                // 流量类边界：以 bc_Q 作为精确入流通量（跳过虚节点 HLLC 通量），
+                // 避免 fA_ghost≈bc_Q 近似误差引起数值振荡。
+                double h_old = DepthAt(TimeLevel - 1, 0);
                 double bc_Q = Channel.UpstreamBoundary.Hydrograph?.GetAt(tCur)
                               ?? Hydraulics.NormalFlow(
                                    Channel.XsAtNode![0].BedSlope ?? 0,
-                                   Channel.XsAtNode![0].Conveyance(Channel.XsAtNode![0].ZMin + hGuess));
+                                   Channel.XsAtNode![0].Conveyance(Channel.XsAtNode![0].ZMin + h_old));
+                // 连续性方程：新面积 = 旧面积 + (入流 - 出流)/dx*dt
+                double newA = A_0 + dt / dx * (bc_Q - fA[0]) + qLat * dt;
+                double hGuess = AreaToDepth(0, newA);
                 Depth![TimeLevel, 0] = hGuess;
                 // 当水深为0（干断面）时，流量也归零以保持 h=0/Q=0 一致性
                 Flow![TimeLevel, 0]  = hGuess > 0 ? bc_Q : 0;
             }
             else
             {
-                // 水深类边界：用动量方程算 Q，水深取边界给定值
+                // 水深类边界：虚节点（常数外推）+ HLLC 通量计算流量
+                double T_0 = Channel.TopWidth(0, WaterLevelAt(TimeLevel - 1, 0));
+                HLLCFlux(A_0, Q_0, T_0, A_0, Q_0, T_0, out double fA_ghost, out double fQ_ghost);
+                double newQ = Q_0 - dt / dx * (fQ[0] - fQ_ghost)
+                                   + Hydraulics.G * A_0 * (S0 - Sf) * dt;
                 double targetDepth = Channel.UpstreamBoundary.InitialDepth ?? DepthAt(0, 0);
                 Depth![TimeLevel, 0] = targetDepth;
                 Flow![TimeLevel, 0]  = double.IsFinite(newQ) ? newQ : 0;
@@ -456,15 +458,20 @@ namespace FlowSim.Models
         // ---- HLLC 通量核心 ----
 
         /// <summary>
-        /// 计算 HLLC Riemann 通量。
+        /// 计算 HLL Riemann 通量（使用 HLL 两波格式，而非 HLLC 三波格式）。
         /// <para>
         /// 守恒变量 U = [A, Q]；物理通量 F = [Q, Q²/A + gAD/2]（D = A/T 为水力深度）。
         /// 波速估算（Einfeldt 法）：
         ///   S_L = min(V_L − c_L, V_R − c_R)，S_R = max(V_L + c_L, V_R + c_R)；
-        /// 接触波速（Batten 等, 1997）：
-        ///   S_* = (P_L − P_R + A_L·V_L·(S_L − V_L) − A_R·V_R·(S_R − V_R))
-        ///         / (A_L·(S_L − V_L) − A_R·(S_R − V_R))；
-        /// 中间态：A_K* = A_K·(S_K − V_K)/(S_K − S_*)，Q_K* = A_K*·S_*。
+        /// HLL 通量（两波格式）：
+        ///   F_HLL = (S_R·F_L − S_L·F_R + S_L·S_R·(U_R − U_L)) / (S_R − S_L)。
+        /// </para>
+        /// <para>
+        /// 使用 HLL 而非 HLLC 的原因：对缓流（Fr≪1）浅水方程，HLLC 的质量通量
+        /// <c>fA ≈ Q_L</c>（纯上风格式）缺乏面积耗散项，导致 Nyquist 模数值增长
+        /// （放大因子 ≈1.9/步），而 HLL 的质量通量含显式面积耗散
+        /// <c>−½·c·(A_R−A_L)</c>，可将该模衰减 62 倍/步，保证计算稳定。
+        /// 对缓流情形，HLL 与 HLLC 的物理精度无实质差别（1D 浅水方程接触波退化）。
         /// </para>
         /// </summary>
         private static void HLLCFlux(
@@ -506,40 +513,11 @@ namespace FlowSim.Models
             if (S_L >= 0) { fa = fA_L; fq = fQ_L; return; }
             if (S_R <= 0) { fa = fA_R; fq = fQ_R; return; }
 
-            // ── 接触波速 S_* （Batten et al., 1997）──
-            double denom = A_L * (S_L - V_L) - A_R * (S_R - V_R);
-            double S_star;
-            if (Math.Abs(denom) < eps)
-            {
-                // 退化情形：取两侧速度算术平均
-                S_star = 0.5 * (V_L + V_R);
-            }
-            else
-            {
-                S_star = (P_L - P_R + A_L * V_L * (S_L - V_L) - A_R * V_R * (S_R - V_R)) / denom;
-            }
-            // 将 S_* 夹在 [S_L, S_R] 内，确保数值稳定
-            S_star = Math.Max(S_L, Math.Min(S_R, S_star));
-
-            // ── 计算 HLLC 通量 ──
-            if (S_star >= 0)
-            {
-                // 接触波向右 → 取左 HLLC 中间态
-                double factor = (S_L - V_L) / (S_L - S_star);   // > 0（因 S_L < V_L 且 S_L ≤ S_*）
-                double A_Ls = A_L * factor;
-                double Q_Ls = A_Ls * S_star;
-                fa = fA_L + S_L * (A_Ls - A_L);
-                fq = fQ_L + S_L * (Q_Ls - Q_L);
-            }
-            else
-            {
-                // 接触波向左 → 取右 HLLC 中间态
-                double factor = (S_R - V_R) / (S_R - S_star);   // > 0（因 S_R > V_R 且 S_R ≥ S_*）
-                double A_Rs = A_R * factor;
-                double Q_Rs = A_Rs * S_star;
-                fa = fA_R + S_R * (A_Rs - A_R);
-                fq = fQ_R + S_R * (Q_Rs - Q_R);
-            }
+            // ── HLL 两波通量 ──
+            // F_HLL = (S_R·F_L − S_L·F_R + S_L·S_R·(U_R − U_L)) / (S_R − S_L)
+            double dS = S_R - S_L;
+            fa = (S_R * fA_L - S_L * fA_R + S_L * S_R * (A_R - A_L)) / dS;
+            fq = (S_R * fQ_L - S_L * fQ_R + S_L * S_R * (Q_R - Q_L)) / dS;
         }
 
         // ---- CFL 检验 ----

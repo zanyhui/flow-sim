@@ -522,7 +522,15 @@ namespace FlowSim.Models
                 double denom = Math.Max(1.0 - FrSq, 0.01);   // 分母下限防除零
 
                 // 局部河床坡度 S0（由相邻节点床底高程差计算）
-                double S0 = nodeIdx + 1 < nNodes ? (BedLevelAt(nodeIdx) - BedLevelAt(nodeIdx + 1)) / dx : 0;
+                // 对末节点（nodeIdx = nNodes-1），使用后向差分以避免 S0=0 造成初始条件突变。
+                double S0;
+                if (nodeIdx + 1 < nNodes)
+                    S0 = (BedLevelAt(nodeIdx) - BedLevelAt(nodeIdx + 1)) / dx;   // 前向差分
+                else if (nodeIdx > 0)
+                    S0 = (BedLevelAt(nodeIdx - 1) - BedLevelAt(nodeIdx)) / dx;   // 后向差分（末节点）
+                else
+                    S0 = 0;
+
                 double Sf = Se(hIn, Q, nodeIdx);               // 等效能量坡度（摩阻+弯曲）
                 return (S0 - Sf) / denom;                      // GVF 水面梯度公式
             }
